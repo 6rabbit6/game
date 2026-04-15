@@ -593,11 +593,99 @@ button {
     gap: 12px;
   }
 
+  .hero-card,
+  .panel,
+  .table-card,
+  .admin-card,
+  .selector-bar,
+  .empty-card {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .event-card {
+    padding: 18px;
+  }
+
+  .event-meta h3,
+  .entry-title {
+    font-size: 1.15rem;
+  }
+
+  .schedule-table thead,
+  .group-table thead,
+  .admin-table thead {
+    display: none;
+  }
+
   .schedule-table,
   .group-table,
-  .admin-table {
+  .admin-table,
+  .schedule-table tbody,
+  .group-table tbody,
+  .admin-table tbody,
+  .schedule-table tr,
+  .group-table tr,
+  .admin-table tr,
+  .schedule-table td,
+  .group-table td,
+  .admin-table td {
     display: block;
-    overflow-x: auto;
-    white-space: nowrap;
+    width: 100%;
+  }
+
+  .schedule-table tr,
+  .group-table tr,
+  .admin-table tr {
+    margin-bottom: 14px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  .schedule-table td,
+  .group-table td,
+  .admin-table td {
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--line);
+    white-space: normal;
+  }
+
+  .schedule-table td:last-child,
+  .group-table td:last-child,
+  .admin-table td:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .schedule-table td::before,
+  .group-table td::before,
+  .admin-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-soft);
+    font-size: 0.84rem;
+    font-weight: 700;
+  }
+
+  .timeline-break td {
+    background: transparent;
+  }
+
+  .timeline-break td[colspan] {
+    white-space: normal;
+  }
+
+  .admin-table td input,
+  .admin-table td select,
+  .admin-table td textarea {
+    width: 100%;
   }
 }
