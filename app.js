@@ -1,11 +1,17 @@
 const STORAGE_KEY = "event-system-data-v1";
 const AUTH_STORAGE_KEY = "event-system-auth-v1";
 const AUTH_SESSION_KEY = "event-system-auth-session-v1";
+const SUPABASE_URL = "https://vrismtdascvwxiyepxed.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "REPLACE_WITH_PUBLISHABLE_KEY";
+const CLOUD_TABLE_NAME = "app_state";
 
 const defaultAuth = {
   username: "admin",
   password: "admin123456",
 };
+
+// 当前管理员登录只用于前端本地保护，不适合强安全场景。
+const cloudClient = createCloudClient();
 
 const defaultData = {
   site: {
@@ -345,7 +351,7 @@ const defaultData = {
 };
 
 const state = {
-  data: loadData(),
+  data: loadLocalData(),
   auth: loadAuth(),
   isAdminAuthenticated: loadAdminSession(),
   route: "home",
@@ -378,20 +384,112 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function loadData() {
+function createCloudClient() {
+  if (!window.supabase?.createClient) {
+    console.warn("Supabase SDK 未加载，云端发布功能不可用。");
+    return null;
+  }
+
+  if (!SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLISHABLE_KEY === "REPLACE_WITH_PUBLISHABLE_KEY") {
+    console.warn("Supabase Publishable Key 未配置，云端发布功能不可用。");
+    return null;
+  }
+
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+}
+
+function isValidAppData(value) {
+  return Boolean(value?.site) && Array.isArray(value?.events);
+}
+
+// 本地模式：页面启动和日常录入都优先读写浏览器 localStorage。
+function loadLocalData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       return clone(defaultData);
     }
     const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.events)) {
+    if (!isValidAppData(parsed)) {
       return clone(defaultData);
     }
     return parsed;
   } catch (error) {
     console.warn("读取本地数据失败，已回退到默认数据。", error);
     return clone(defaultData);
+  }
+}
+
+function saveLocalData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+async function getCloudStateRow() {
+  ensureCloudClientReady();
+
+  const { data, error } = await cloudClient
+    .from(CLOUD_TABLE_NAME)
+    .select("id, data, created_at")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.[0] || null;
+}
+
+// 云端模式：只在手动点击按钮时访问 Supabase，不参与字段输入时的自动保存。
+async function loadCloudData() {
+  const row = await getCloudStateRow();
+  if (!row) {
+    return null;
+  }
+
+  const parsedData = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+
+  if (!isValidAppData(parsedData)) {
+    throw new Error("云端数据结构不合法");
+  }
+
+  return parsedData;
+}
+
+async function saveCloudData(data) {
+  ensureCloudClientReady();
+
+  if (!isValidAppData(data)) {
+    throw new Error("当前本地数据结构不合法，无法上传");
+  }
+
+  const existingRow = await getCloudStateRow();
+
+  if (existingRow) {
+    const { error } = await cloudClient.from(CLOUD_TABLE_NAME).update({ data }).eq("id", existingRow.id);
+    if (error) {
+      throw error;
+    }
+    return existingRow.id;
+  }
+
+  const { data: insertedRows, error } = await cloudClient
+    .from(CLOUD_TABLE_NAME)
+    .insert({ data })
+    .select("id")
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  return insertedRows?.[0]?.id || null;
+}
+
+function ensureCloudClientReady() {
+  if (!cloudClient) {
+    throw new Error("Supabase Publishable Key 未配置，或 SDK 尚未成功初始化。");
   }
 }
 
@@ -426,10 +524,6 @@ function saveAdminSession(isLoggedIn) {
     return;
   }
   sessionStorage.removeItem(AUTH_SESSION_KEY);
-}
-
-function saveData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
 }
 
 function uid(prefix) {
@@ -525,7 +619,7 @@ function renderView() {
         <p class="hint">请先进入后台创建赛事，或者恢复默认演示数据。</p>
         <div class="table-actions">
           <button class="cta-button" data-route="admin">进入后台</button>
-          <button class="ghost-button" data-admin-action="reset-demo">恢复默认数据</button>
+          <button class="ghost-button" data-admin-action="reset-default-data">恢复默认数据</button>
         </div>
       </section>
     `;
@@ -922,10 +1016,23 @@ function renderAdminView() {
           </div>
         </div>
         <div class="selector-actions">
+          <span class="badge">已自动保存到本地</span>
+          <button class="ghost-button" data-admin-action="download-cloud">从云端拉取</button>
+          <button class="cta-button" data-admin-action="upload-cloud">上传到云端</button>
+          <button class="danger-button" data-admin-action="reset-default-data">恢复默认演示数据</button>
+        </div>
+        <div class="selector-actions">
           <button class="ghost-button" data-admin-action="export-json">导出 JSON</button>
           <button class="ghost-button" data-admin-action="import-json">导入 JSON</button>
-          <button class="danger-button" data-admin-action="reset-demo">恢复默认演示数据</button>
         </div>
+        <p class="hint">
+          本地模式用于日常录入与调试，字段修改后只会保存到当前浏览器；只有手动点击“上传到云端”，才会覆盖 Supabase 中的正式数据。
+          ${
+            cloudClient
+              ? ""
+              : " 当前 Supabase Publishable Key 仍是占位值，云端拉取/上传按钮在替换真实 key 前无法成功执行。"
+          }
+        </p>
       </div>
 
       <section class="admin-section">
@@ -1393,7 +1500,8 @@ function handleChange(event) {
   const modelField = event.target.closest("[data-model]");
   if (modelField) {
     setByPath(state.data, modelField.dataset.model, modelField.value);
-    saveData();
+    // 字段修改后仅自动写入本地，不自动上传云端。
+    saveLocalData(state.data);
     renderShell();
     renderView();
     return;
@@ -1456,8 +1564,14 @@ function runAdminAction(action, dataset = {}) {
     case "import-json":
       importJson();
       break;
-    case "reset-demo":
-      resetDemo();
+    case "download-cloud":
+      downloadFromCloud();
+      break;
+    case "upload-cloud":
+      uploadToCloud();
+      break;
+    case "reset-default-data":
+      resetToDefaultData();
       break;
     default:
       break;
@@ -1503,7 +1617,7 @@ function addEvent() {
   state.data.events.push(nextEvent);
   state.adminEventId = nextEvent.id;
   state.selectedEventId = nextEvent.id;
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1528,7 +1642,7 @@ function addDay() {
   if (event.id === state.selectedEventId) {
     state.selectedDayId = nextDay.id;
   }
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1537,7 +1651,7 @@ function removeDay() {
   const event = getAdminEvent();
   if (!event || !state.adminDayId) return;
   event.days = event.days.filter((day) => day.id !== state.adminDayId);
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1564,7 +1678,7 @@ function addEntry() {
   if (day.id === state.selectedDayId) {
     state.selectedEntryId = nextEntry.id;
   }
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1573,7 +1687,7 @@ function removeEntry() {
   const day = getAdminDay();
   if (!day || !state.adminEntryId) return;
   day.entries = day.entries.filter((entry) => entry.id !== state.adminEntryId);
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1593,7 +1707,7 @@ function addGroup() {
   if (entry.id === state.selectedEntryId) {
     state.selectedGroupId = nextGroup.id;
   }
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1603,7 +1717,7 @@ function removeGroup() {
   if (!entry || !state.adminGroupId) return;
   entry.groups = entry.groups.filter((group) => group.id !== state.adminGroupId);
   entry.groupCount = String(entry.groups.length);
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1620,7 +1734,7 @@ function addAthlete() {
     result: "",
     note: "",
   });
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderView();
 }
@@ -1629,7 +1743,7 @@ function removeAthlete(index) {
   const group = getAdminGroup();
   if (!group || Number.isNaN(index)) return;
   group.athletes.splice(index, 1);
-  saveData();
+  saveLocalData(state.data);
   renderView();
 }
 
@@ -1655,11 +1769,11 @@ function importJson() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        if (!parsed || !Array.isArray(parsed.events) || !parsed.site) {
+        if (!isValidAppData(parsed)) {
           throw new Error("JSON 结构不合法");
         }
         state.data = parsed;
-        saveData();
+        saveLocalData(state.data);
         syncSelections();
         renderShell();
         renderView();
@@ -1672,9 +1786,51 @@ function importJson() {
   input.click();
 }
 
-function resetDemo() {
+// 手动发布：把当前本地 state.data 整份推送到 Supabase 正式数据表。
+async function uploadToCloud() {
+  const confirmed = window.confirm("是否用当前本地数据覆盖云端正式数据？");
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await saveCloudData(state.data);
+    window.alert("上传成功，云端正式数据已被当前本地数据覆盖。");
+  } catch (error) {
+    console.error("上传云端失败：", error);
+    window.alert(`上传失败：${error.message || "请检查 Supabase 配置或表权限。"}`);
+  }
+}
+
+// 手动拉取：从 Supabase 读取正式数据，并覆盖当前本地数据。
+async function downloadFromCloud() {
+  const confirmed = window.confirm("是否用云端正式数据覆盖当前本地数据？");
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const cloudData = await loadCloudData();
+    if (!cloudData) {
+      window.alert("云端还没有正式数据，当前不会覆盖本地数据。");
+      return;
+    }
+
+    state.data = clone(cloudData);
+    saveLocalData(state.data);
+    syncSelections();
+    renderShell();
+    renderView();
+    window.alert("拉取成功，当前本地数据已被云端正式数据覆盖。");
+  } catch (error) {
+    console.error("拉取云端数据失败：", error);
+    window.alert(`拉取失败：${error.message || "请检查 Supabase 配置或表权限。"}`);
+  }
+}
+
+function resetToDefaultData() {
   state.data = clone(defaultData);
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderShell();
   renderView();
@@ -1751,7 +1907,7 @@ function removeEventById(eventId) {
   if (state.adminEventId === eventId) {
     state.adminEventId = null;
   }
-  saveData();
+  saveLocalData(state.data);
   syncSelections();
   renderShell();
   renderView();
