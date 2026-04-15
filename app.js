@@ -2,7 +2,7 @@ const STORAGE_KEY = "event-system-data-v1";
 const AUTH_STORAGE_KEY = "event-system-auth-v1";
 const AUTH_SESSION_KEY = "event-system-auth-session-v1";
 const SUPABASE_URL = "https://vrismtdascvwxiyepxed.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "REPLACE_WITH_PUBLISHABLE_KEY";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_OIBFAzMGjT4x3T6Dr90E0A_WB2ILWYE";
 const CLOUD_TABLE_NAME = "app_state";
 
 const defaultAuth = {
