@@ -4,6 +4,7 @@ const AUTH_SESSION_KEY = "event-system-auth-session-v1";
 const SUPABASE_URL = "https://vrismtdascvwxiyepxed.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_OIBFAzMGjT4x3T6Dr90E0A_WB2ILWYE";
 const CLOUD_TABLE_NAME = "app_state";
+const CLOUD_FIRST_HOSTS = ["6rabbit6.github.io"];
 
 const defaultAuth = {
   username: "admin",
@@ -373,11 +374,15 @@ const pageFooter = document.querySelector("#pageFooter");
 
 bootstrap();
 
-function bootstrap() {
+async function bootstrap() {
   syncSelections();
   renderShell();
   renderView();
   bindEvents();
+
+  if (shouldPreferCloudOnStartup()) {
+    await hydrateCloudStateOnStartup();
+  }
 }
 
 function clone(value) {
@@ -400,6 +405,23 @@ function createCloudClient() {
 
 function isValidAppData(value) {
   return Boolean(value?.site) && Array.isArray(value?.events);
+}
+
+function normalizeCloudAppData(value) {
+  if (typeof value === "string") {
+    return normalizeCloudAppData(JSON.parse(value));
+  }
+
+  if (isValidAppData(value)) {
+    return value;
+  }
+
+  // 兼容一些早期/错误写入格式，例如 { data: {...真实业务数据...} }
+  if (value && typeof value === "object" && isValidAppData(value.data)) {
+    return value.data;
+  }
+
+  return null;
 }
 
 // 本地模式：页面启动和日常录入都优先读写浏览器 localStorage。
@@ -448,10 +470,10 @@ async function loadCloudData() {
     return null;
   }
 
-  const parsedData = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+  const parsedData = normalizeCloudAppData(row.data);
 
-  if (!isValidAppData(parsedData)) {
-    throw new Error("云端数据结构不合法");
+  if (!parsedData) {
+    throw new Error("云端当前不是有效的赛事系统数据，请先重新上传一次完整数据");
   }
 
   return parsedData;
@@ -467,11 +489,19 @@ async function saveCloudData(data) {
   const existingRow = await getCloudStateRow();
 
   if (existingRow) {
-    const { error } = await cloudClient.from(CLOUD_TABLE_NAME).update({ data }).eq("id", existingRow.id);
+    const { data: updatedRows, error } = await cloudClient
+      .from(CLOUD_TABLE_NAME)
+      .update({ data })
+      .eq("id", existingRow.id)
+      .select("id")
+      .limit(1);
     if (error) {
       throw error;
     }
-    return existingRow.id;
+    if (!updatedRows?.length) {
+      throw new Error("云端未实际更新，请检查 Supabase 的 app_state 表是否允许 publishable key 执行 update");
+    }
+    return updatedRows[0].id;
   }
 
   const { data: insertedRows, error } = await cloudClient
@@ -484,12 +514,41 @@ async function saveCloudData(data) {
     throw error;
   }
 
+  if (!insertedRows?.length) {
+    throw new Error("云端未实际写入，请检查 Supabase 的 app_state 表是否允许 publishable key 执行 insert");
+  }
+
   return insertedRows?.[0]?.id || null;
 }
 
 function ensureCloudClientReady() {
   if (!cloudClient) {
     throw new Error("Supabase Publishable Key 未配置，或 SDK 尚未成功初始化。");
+  }
+}
+
+function shouldPreferCloudOnStartup() {
+  if (typeof window === "undefined" || typeof window.location === "undefined") {
+    return false;
+  }
+
+  return CLOUD_FIRST_HOSTS.some((host) => window.location.hostname === host);
+}
+
+async function hydrateCloudStateOnStartup() {
+  try {
+    const cloudData = await loadCloudData();
+    if (!cloudData) {
+      return;
+    }
+
+    state.data = clone(cloudData);
+    saveLocalData(state.data);
+    syncSelections();
+    renderShell();
+    renderView();
+  } catch (error) {
+    console.warn("启动时拉取云端正式数据失败，已保留本地数据。", error);
   }
 }
 
@@ -799,26 +858,26 @@ function renderScheduleRow(entry) {
   if (entry.type === "break") {
     return `
       <tr class="timeline-break">
-        <td>${escapeHtml(entry.time || "-")}</td>
-        <td>${escapeHtml(entry.projectName || "休整")}</td>
-        <td colspan="7">${escapeHtml(entry.round || "中场维护")}</td>
-        <td><span class="subtle">无分组</span></td>
+        <td data-label="比赛时间">${escapeHtml(entry.time || "-")}</td>
+        <td data-label="项目名称">${escapeHtml(entry.projectName || "休整")}</td>
+        <td data-label="组别" colspan="7">${escapeHtml(entry.round || "中场维护")}</td>
+        <td data-label="操作"><span class="subtle">无分组</span></td>
       </tr>
     `;
   }
 
   return `
     <tr>
-      <td>${escapeHtml(entry.time || "")}</td>
-      <td>${escapeHtml(entry.projectName || "")}</td>
-      <td>${escapeHtml(entry.division || "")}</td>
-      <td>${escapeHtml(entry.gender || "")}</td>
-      <td>${escapeHtml(entry.round || "")}</td>
-      <td>${escapeHtml(entry.participantCount || "")}</td>
-      <td>${escapeHtml(entry.groupCount || "")}</td>
-      <td>${escapeHtml(entry.qualification || "")}</td>
-      <td>${escapeHtml(entry.note || "")}</td>
-      <td>
+      <td data-label="比赛时间">${escapeHtml(entry.time || "")}</td>
+      <td data-label="项目名称">${escapeHtml(entry.projectName || "")}</td>
+      <td data-label="组别">${escapeHtml(entry.division || "")}</td>
+      <td data-label="性别">${escapeHtml(entry.gender || "")}</td>
+      <td data-label="赛别">${escapeHtml(entry.round || "")}</td>
+      <td data-label="人数">${escapeHtml(entry.participantCount || "")}</td>
+      <td data-label="组数">${escapeHtml(entry.groupCount || "")}</td>
+      <td data-label="录取规则">${escapeHtml(entry.qualification || "")}</td>
+      <td data-label="备注">${escapeHtml(entry.note || "")}</td>
+      <td data-label="操作">
         ${
           entry.groups?.length
             ? `<button class="tiny-button" data-open-entry="${entry.id}">查看分组</button>`
@@ -912,13 +971,13 @@ function renderGroupsView() {
                   .map(
                     (athlete) => `
                       <tr>
-                        <td>${escapeHtml(athlete.rank || "")}</td>
-                        <td>${escapeHtml(athlete.lane || "")}</td>
-                        <td>${escapeHtml(athlete.bib || "")}</td>
-                        <td>${escapeHtml(athlete.name || "")}</td>
-                        <td>${escapeHtml(athlete.team || "")}</td>
-                        <td>${escapeHtml(athlete.result || "")}</td>
-                        <td>${escapeHtml(athlete.note || "")}</td>
+                        <td data-label="名次">${escapeHtml(athlete.rank || "")}</td>
+                        <td data-label="道次">${escapeHtml(athlete.lane || "")}</td>
+                        <td data-label="号码">${escapeHtml(athlete.bib || "")}</td>
+                        <td data-label="姓名">${escapeHtml(athlete.name || "")}</td>
+                        <td data-label="单位">${escapeHtml(athlete.team || "")}</td>
+                        <td data-label="成绩">${escapeHtml(athlete.result || "")}</td>
+                        <td data-label="备注">${escapeHtml(athlete.note || "")}</td>
                       </tr>
                     `
                   )
@@ -1027,6 +1086,7 @@ function renderAdminView() {
         </div>
         <p class="hint">
           本地模式用于日常录入与调试，字段修改后只会保存到当前浏览器；只有手动点击“上传到云端”，才会覆盖 Supabase 中的正式数据。
+          GitHub Pages 正式站点打开时会自动优先读取云端正式数据，并同步刷新站点本地缓存。
           ${
             cloudClient
               ? ""
@@ -1345,14 +1405,14 @@ function renderAthleteRow(athlete, athleteIndex, eventIndex, dayIndex, entryInde
   const basePath = `events[${eventIndex}].days[${dayIndex}].entries[${entryIndex}].groups[${groupIndex}].athletes[${athleteIndex}]`;
   return `
     <tr>
-      <td><input data-model="${basePath}.rank" value="${escapeAttribute(athlete.rank || "")}" /></td>
-      <td><input data-model="${basePath}.lane" value="${escapeAttribute(athlete.lane || "")}" /></td>
-      <td><input data-model="${basePath}.bib" value="${escapeAttribute(athlete.bib || "")}" /></td>
-      <td><input data-model="${basePath}.name" value="${escapeAttribute(athlete.name || "")}" /></td>
-      <td><input data-model="${basePath}.team" value="${escapeAttribute(athlete.team || "")}" /></td>
-      <td><input data-model="${basePath}.result" value="${escapeAttribute(athlete.result || "")}" /></td>
-      <td><input data-model="${basePath}.note" value="${escapeAttribute(athlete.note || "")}" /></td>
-      <td><button class="danger-button" data-admin-action="remove-athlete" data-athlete-index="${athleteIndex}">删除</button></td>
+      <td data-label="名次"><input data-model="${basePath}.rank" value="${escapeAttribute(athlete.rank || "")}" /></td>
+      <td data-label="道次"><input data-model="${basePath}.lane" value="${escapeAttribute(athlete.lane || "")}" /></td>
+      <td data-label="号码"><input data-model="${basePath}.bib" value="${escapeAttribute(athlete.bib || "")}" /></td>
+      <td data-label="姓名"><input data-model="${basePath}.name" value="${escapeAttribute(athlete.name || "")}" /></td>
+      <td data-label="单位"><input data-model="${basePath}.team" value="${escapeAttribute(athlete.team || "")}" /></td>
+      <td data-label="成绩"><input data-model="${basePath}.result" value="${escapeAttribute(athlete.result || "")}" /></td>
+      <td data-label="备注"><input data-model="${basePath}.note" value="${escapeAttribute(athlete.note || "")}" /></td>
+      <td data-label="操作"><button class="danger-button" data-admin-action="remove-athlete" data-athlete-index="${athleteIndex}">删除</button></td>
     </tr>
   `;
 }
