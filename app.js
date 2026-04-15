@@ -1,17 +1,8 @@
 const STORAGE_KEY = "event-system-data-v1";
-const AUTH_STORAGE_KEY = "event-system-auth-v1";
-const AUTH_SESSION_KEY = "event-system-auth-session-v1";
 const SUPABASE_URL = "https://vrismtdascvwxiyepxed.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_OIBFAzMGjT4x3T6Dr90E0A_WB2ILWYE";
 const CLOUD_TABLE_NAME = "app_state";
 const CLOUD_FIRST_HOSTS = ["6rabbit6.github.io"];
-
-const defaultAuth = {
-  username: "admin",
-  password: "admin123456",
-};
-
-// 当前管理员登录只用于前端本地保护，不适合强安全场景。
 const cloudClient = createCloudClient();
 
 const defaultData = {
@@ -353,8 +344,9 @@ const defaultData = {
 
 const state = {
   data: loadLocalData(),
-  auth: loadAuth(),
-  isAdminAuthenticated: loadAdminSession(),
+  authSession: null,
+  adminEmail: "",
+  isAdminAuthenticated: false,
   route: "home",
   selectedEventId: null,
   selectedDayId: null,
@@ -375,6 +367,7 @@ const pageFooter = document.querySelector("#pageFooter");
 bootstrap();
 
 async function bootstrap() {
+  await initializeAdminAuth();
   syncSelections();
   renderShell();
   renderView();
@@ -527,6 +520,40 @@ function ensureCloudClientReady() {
   }
 }
 
+async function initializeAdminAuth() {
+  if (!cloudClient?.auth) {
+    console.warn("Supabase Auth 未初始化，后台登录不可用。");
+    return;
+  }
+
+  try {
+    const {
+      data: { session },
+      error,
+    } = await cloudClient.auth.getSession();
+
+    if (error) {
+      throw error;
+    }
+
+    applyAdminSession(session);
+
+    cloudClient.auth.onAuthStateChange((_event, nextSession) => {
+      applyAdminSession(nextSession);
+      renderShell();
+      renderView();
+    });
+  } catch (error) {
+    console.warn("初始化后台登录状态失败，后台将保持未登录。", error);
+  }
+}
+
+function applyAdminSession(session) {
+  state.authSession = session || null;
+  state.adminEmail = session?.user?.email || "";
+  state.isAdminAuthenticated = Boolean(session?.user);
+}
+
 function shouldPreferCloudOnStartup() {
   if (typeof window === "undefined" || typeof window.location === "undefined") {
     return false;
@@ -550,39 +577,6 @@ async function hydrateCloudStateOnStartup() {
   } catch (error) {
     console.warn("启动时拉取云端正式数据失败，已保留本地数据。", error);
   }
-}
-
-function loadAuth() {
-  try {
-    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) {
-      return clone(defaultAuth);
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed?.username || !parsed?.password) {
-      return clone(defaultAuth);
-    }
-    return parsed;
-  } catch (error) {
-    console.warn("读取账号信息失败，已回退到默认账号。", error);
-    return clone(defaultAuth);
-  }
-}
-
-function saveAuth() {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state.auth));
-}
-
-function loadAdminSession() {
-  return sessionStorage.getItem(AUTH_SESSION_KEY) === "true";
-}
-
-function saveAdminSession(isLoggedIn) {
-  if (isLoggedIn) {
-    sessionStorage.setItem(AUTH_SESSION_KEY, "true");
-    return;
-  }
-  sessionStorage.removeItem(AUTH_SESSION_KEY);
 }
 
 function uid(prefix) {
@@ -1336,7 +1330,7 @@ function renderAdminView() {
         <div class="toolbar">
           <div>
             <h3>账户安全</h3>
-            <p>只有输入正确的管理员账号和密码，才能访问后台管理页面。</p>
+            <p>后台改为使用 Supabase Auth 统一登录。只有云端管理员账号登录成功后，才能执行后台编辑与云端发布。</p>
           </div>
           <div class="field-actions">
             <button class="ghost-button" data-auth-action="logout-admin">退出登录</button>
@@ -1344,8 +1338,8 @@ function renderAdminView() {
         </div>
         <div class="form-grid">
           <div class="field">
-            <label>管理员账号</label>
-            <input value="${escapeAttribute(state.auth.username)}" readonly />
+            <label>管理员邮箱</label>
+            <input value="${escapeAttribute(state.adminEmail || "未登录")}" readonly />
           </div>
           <div class="field">
             <label>登录状态</label>
@@ -1369,7 +1363,7 @@ function renderAdminView() {
         <div class="field-actions">
           <button class="cta-button" data-auth-action="change-password">修改密码</button>
         </div>
-        <p class="hint">当前版本为本地浏览器账号系统，默认账号是“admin”，初始密码是“admin123456”。</p>
+        <p class="hint">密码修改会写入 Supabase Auth，所有设备下次登录都会同步生效。旧密码会先进行云端校验，然后才允许改成新密码。</p>
       </section>
     </section>
   `;
@@ -1380,12 +1374,12 @@ function renderAdminLoginView() {
     <section class="admin-card">
       <div class="admin-head">
         <h2>后台登录</h2>
-        <p>请输入管理员账号和密码，验证通过后才可访问后台录入与编辑功能。</p>
+        <p>请输入 Supabase Auth 中已创建的管理员邮箱和密码，验证通过后才可访问后台录入与编辑功能。</p>
       </div>
       <div class="form-grid">
         <div class="field">
-          <label for="login-username">管理员账号</label>
-          <input id="login-username" value="${escapeAttribute(state.auth.username)}" autocomplete="username" />
+          <label for="login-email">管理员邮箱</label>
+          <input id="login-email" type="email" placeholder="请输入管理员邮箱" autocomplete="username" />
         </div>
         <div class="field">
           <label for="login-password">管理员密码</label>
@@ -1396,7 +1390,7 @@ function renderAdminLoginView() {
         <button class="cta-button" data-auth-action="login-admin">登录后台</button>
         <button class="ghost-button" data-route="home">返回首页</button>
       </div>
-      <p class="hint">默认账号：admin，默认密码：admin123456。登录后可在“账户安全”中修改密码。</p>
+      <p class="hint">请先在 Supabase 控制台的 Auth 用户列表中创建管理员账号。登录后可在“账户安全”中修改密码。</p>
     </section>
   `;
 }
@@ -1848,6 +1842,10 @@ function importJson() {
 
 // 手动发布：把当前本地 state.data 整份推送到 Supabase 正式数据表。
 async function uploadToCloud() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const confirmed = window.confirm("是否用当前本地数据覆盖云端正式数据？");
   if (!confirmed) {
     return;
@@ -1864,6 +1862,10 @@ async function uploadToCloud() {
 
 // 手动拉取：从 Supabase 读取正式数据，并覆盖当前本地数据。
 async function downloadFromCloud() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const confirmed = window.confirm("是否用云端正式数据覆盖当前本地数据？");
   if (!confirmed) {
     return;
@@ -1889,6 +1891,10 @@ async function downloadFromCloud() {
 }
 
 function resetToDefaultData() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   state.data = clone(defaultData);
   saveLocalData(state.data);
   syncSelections();
@@ -1896,35 +1902,68 @@ function resetToDefaultData() {
   renderView();
 }
 
-function loginAdmin() {
-  const username = document.querySelector("#login-username")?.value.trim() || "";
+function ensureAdminAuthenticated() {
+  if (state.isAdminAuthenticated) {
+    return true;
+  }
+
+  window.alert("请先登录后台管理员账号。");
+  setRoute("admin");
+  return false;
+}
+
+async function loginAdmin() {
+  const email = document.querySelector("#login-email")?.value.trim() || "";
   const password = document.querySelector("#login-password")?.value || "";
 
-  if (!username || !password) {
-    window.alert("请输入账号和密码。");
+  if (!email || !password) {
+    window.alert("请输入管理员邮箱和密码。");
     return;
   }
 
-  if (username !== state.auth.username || password !== state.auth.password) {
-    window.alert("账号或密码不正确。");
+  if (!cloudClient?.auth) {
+    window.alert("Supabase Auth 尚未初始化，当前无法登录后台。");
     return;
   }
 
-  state.isAdminAuthenticated = true;
-  saveAdminSession(true);
-  renderShell();
-  renderView();
+  try {
+    const { error } = await cloudClient.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    window.alert("登录成功。");
+  } catch (error) {
+    console.error("后台登录失败：", error);
+    window.alert(`登录失败：${error.message || "请检查邮箱或密码。"}`);
+  }
 }
 
-function logoutAdmin() {
-  state.isAdminAuthenticated = false;
-  saveAdminSession(false);
-  renderShell();
-  renderView();
+async function logoutAdmin() {
+  if (!cloudClient?.auth) {
+    applyAdminSession(null);
+    renderShell();
+    renderView();
+    return;
+  }
+
+  try {
+    const { error } = await cloudClient.auth.signOut();
+    if (error) {
+      throw error;
+    }
+  } catch (error) {
+    console.error("退出后台失败：", error);
+    window.alert(`退出失败：${error.message || "请稍后再试。"}`);
+  }
 }
 
-function changePassword() {
-  if (!state.isAdminAuthenticated) return;
+async function changePassword() {
+  if (!ensureAdminAuthenticated()) return;
 
   const oldPassword = document.querySelector("#old-password")?.value || "";
   const newPassword = document.querySelector("#new-password")?.value || "";
@@ -1935,8 +1974,8 @@ function changePassword() {
     return;
   }
 
-  if (oldPassword !== state.auth.password) {
-    window.alert("旧密码不正确。");
+  if (!state.adminEmail) {
+    window.alert("当前未获取到管理员邮箱，请重新登录后再试。");
     return;
   }
 
@@ -1950,13 +1989,30 @@ function changePassword() {
     return;
   }
 
-  state.auth.password = newPassword;
-  saveAuth();
-  state.isAdminAuthenticated = false;
-  saveAdminSession(false);
-  window.alert("密码修改成功，请使用新密码重新登录。");
-  renderShell();
-  renderView();
+  try {
+    const { error: verifyError } = await cloudClient.auth.signInWithPassword({
+      email: state.adminEmail,
+      password: oldPassword,
+    });
+
+    if (verifyError) {
+      throw new Error("旧密码不正确。");
+    }
+
+    const { error: updateError } = await cloudClient.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    await cloudClient.auth.signOut();
+    window.alert("密码修改成功，请使用新密码重新登录。");
+  } catch (error) {
+    console.error("修改后台密码失败：", error);
+    window.alert(`修改失败：${error.message || "请稍后重试。"}`);
+  }
 }
 
 function removeEventById(eventId) {
