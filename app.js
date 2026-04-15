@@ -756,7 +756,11 @@ function renderEventCard(event) {
       <div class="toolbar-actions">
         <button class="cta-button" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
         <button class="ghost-button" data-open-event="${event.id}" data-route-target="groups">查看分组</button>
-        <button class="danger-button" data-remove-event="${event.id}">删除赛事</button>
+        ${
+          state.isAdminAuthenticated
+            ? `<button class="danger-button" data-remove-event="${event.id}">删除赛事</button>`
+            : ""
+        }
       </div>
     </article>
   `;
@@ -1503,6 +1507,10 @@ function handleClick(event) {
 
   const removeEventButton = event.target.closest("[data-remove-event]");
   if (removeEventButton) {
+    if (!ensureAdminAuthenticated()) {
+      return;
+    }
+
     const eventId = removeEventButton.dataset.removeEvent;
     const eventItem = state.data.events.find((item) => item.id === eventId);
     if (!eventItem) return;
