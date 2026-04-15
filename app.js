@@ -556,8 +556,8 @@ async function getCloudStateRow() {
   const { data, error } = await cloudClient
     .from(CLOUD_TABLE_NAME)
     .select("id, data, created_at")
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(1);
 
   if (error) {
@@ -590,6 +590,7 @@ async function saveCloudData(data) {
     throw new Error("当前本地数据结构不合法，无法上传");
   }
 
+  // app_state 被设计为单行正式数据表：存在记录时只更新该行，不额外插入历史副本。
   const existingRow = await getCloudStateRow();
 
   if (existingRow) {
@@ -603,7 +604,7 @@ async function saveCloudData(data) {
       throw error;
     }
     if (!updatedRows?.length) {
-      throw new Error("云端未实际更新，请检查 Supabase 的 app_state 表是否允许 publishable key 执行 update");
+      throw new Error("云端记录存在，但当前账号没有权限更新 app_state");
     }
     return updatedRows[0].id;
   }
@@ -619,7 +620,7 @@ async function saveCloudData(data) {
   }
 
   if (!insertedRows?.length) {
-    throw new Error("云端未实际写入，请检查 Supabase 的 app_state 表是否允许 publishable key 执行 insert");
+    throw new Error("云端未实际写入，请检查当前账号是否允许向 app_state 新增正式数据");
   }
 
   return insertedRows?.[0]?.id || null;
@@ -1772,6 +1773,10 @@ function runAuthAction(action) {
 }
 
 function addEvent() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const nextEvent = {
     id: uid("event"),
     name: "新建赛事",
@@ -1800,11 +1805,19 @@ function addEvent() {
 }
 
 function removeEvent() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   if (!state.adminEventId || !state.data.events.length) return;
   removeEventById(state.adminEventId);
 }
 
 function addDay() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const event = getAdminEvent();
   if (!event) return;
   const nextDay = {
@@ -1825,6 +1838,10 @@ function addDay() {
 }
 
 function removeDay() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const event = getAdminEvent();
   if (!event || !state.adminDayId) return;
   event.days = event.days.filter((day) => day.id !== state.adminDayId);
@@ -1834,6 +1851,10 @@ function removeDay() {
 }
 
 function addEntry() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const day = getAdminDay();
   if (!day) return;
   const nextEntry = {
@@ -1861,6 +1882,10 @@ function addEntry() {
 }
 
 function removeEntry() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const day = getAdminDay();
   if (!day || !state.adminEntryId) return;
   day.entries = day.entries.filter((entry) => entry.id !== state.adminEntryId);
@@ -1870,6 +1895,10 @@ function removeEntry() {
 }
 
 function addGroup() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const entry = getAdminEntry();
   if (!entry) return;
   const nextGroup = {
@@ -1890,6 +1919,10 @@ function addGroup() {
 }
 
 function removeGroup() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const entry = getAdminEntry();
   if (!entry || !state.adminGroupId) return;
   entry.groups = entry.groups.filter((group) => group.id !== state.adminGroupId);
@@ -1900,6 +1933,10 @@ function removeGroup() {
 }
 
 function addAthlete() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const group = getAdminGroup();
   if (!group) return;
   group.athletes.push({
@@ -1918,6 +1955,10 @@ function addAthlete() {
 }
 
 function removeAthlete(index) {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   const group = getAdminGroup();
   if (!group || Number.isNaN(index)) return;
   group.athletes.splice(index, 1);
@@ -2143,6 +2184,10 @@ async function changePassword() {
 }
 
 function removeEventById(eventId) {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
   state.data.events = state.data.events.filter((event) => event.id !== eventId);
   if (state.selectedEventId === eventId) {
     state.selectedEventId = null;
