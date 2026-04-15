@@ -417,6 +417,116 @@ function normalizeCloudAppData(value) {
   return null;
 }
 
+function parseCompetitionTime(value) {
+  if (value == null) {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const normalized = raw
+    .replace(/[，]/g, ".")
+    .replace(/[：]/g, ":")
+    .replace(/[”″′’‘“]/g, '"')
+    .replace(/\s+/g, "");
+
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+
+  const parseSecondsPart = (secondsText) => {
+    const cleaned = secondsText
+      .replace(/["']+$/g, "")
+      .replace(/["']+/g, ".")
+      .replace(/\.+/g, ".")
+      .replace(/^\./, "")
+      .replace(/\.$/, "");
+
+    if (!cleaned || !/^\d+(?:\.\d+)?$/.test(cleaned)) {
+      return null;
+    }
+
+    return Number(cleaned);
+  };
+
+  if (normalized.includes(":")) {
+    const [minutesText, secondsText] = normalized.split(":");
+    if (!/^\d+$/.test(minutesText)) {
+      return null;
+    }
+
+    const secondsValue = parseSecondsPart(secondsText);
+    if (secondsValue == null) {
+      return null;
+    }
+
+    return Number(minutesText) * 60 + secondsValue;
+  }
+
+  return parseSecondsPart(normalized);
+}
+
+function recalculateGroupRanks(group) {
+  if (!group?.athletes?.length) {
+    return;
+  }
+
+  const athletesWithTime = group.athletes
+    .map((athlete, index) => ({
+      athlete,
+      index,
+      timeValue: parseCompetitionTime(athlete.result),
+    }))
+    .filter((item) => item.timeValue != null)
+    .sort((left, right) => left.timeValue - right.timeValue);
+
+  group.athletes.forEach((athlete) => {
+    athlete.rank = "";
+  });
+
+  let previousTime = null;
+  let previousRank = 0;
+
+  athletesWithTime.forEach((item, index) => {
+    const currentRank =
+      previousTime != null && Math.abs(item.timeValue - previousTime) < 1e-9 ? previousRank : index + 1;
+
+    item.athlete.rank = String(currentRank);
+    previousTime = item.timeValue;
+    previousRank = currentRank;
+  });
+}
+
+function recalculateAllGroupRanks(data) {
+  data.events?.forEach((event) => {
+    event.days?.forEach((day) => {
+      day.entries?.forEach((entry) => {
+        entry.groups?.forEach((group) => {
+          recalculateGroupRanks(group);
+        });
+      });
+    });
+  });
+}
+
+function getGroupFromAthleteModelPath(path) {
+  const match = path.match(/^events\[(\d+)\]\.days\[(\d+)\]\.entries\[(\d+)\]\.groups\[(\d+)\]\.athletes\[(\d+)\]\.result$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, eventIndexText, dayIndexText, entryIndexText, groupIndexText] = match;
+  const eventIndex = Number(eventIndexText);
+  const dayIndex = Number(dayIndexText);
+  const entryIndex = Number(entryIndexText);
+  const groupIndex = Number(groupIndexText);
+
+  return state.data.events?.[eventIndex]?.days?.[dayIndex]?.entries?.[entryIndex]?.groups?.[groupIndex] || null;
+}
+
 // 本地模式：页面启动和日常录入都优先读写浏览器 localStorage。
 function loadLocalData() {
   try {
@@ -428,6 +538,7 @@ function loadLocalData() {
     if (!isValidAppData(parsed)) {
       return clone(defaultData);
     }
+    recalculateAllGroupRanks(parsed);
     return parsed;
   } catch (error) {
     console.warn("读取本地数据失败，已回退到默认数据。", error);
@@ -1403,7 +1514,7 @@ function renderAthleteRow(athlete, athleteIndex, eventIndex, dayIndex, entryInde
   const basePath = `events[${eventIndex}].days[${dayIndex}].entries[${entryIndex}].groups[${groupIndex}].athletes[${athleteIndex}]`;
   return `
     <tr>
-      <td data-label="名次"><input data-model="${basePath}.rank" value="${escapeAttribute(athlete.rank || "")}" /></td>
+      <td data-label="名次"><input value="${escapeAttribute(athlete.rank || "")}" readonly placeholder="自动计算" /></td>
       <td data-label="道次"><input data-model="${basePath}.lane" value="${escapeAttribute(athlete.lane || "")}" /></td>
       <td data-label="号码"><input data-model="${basePath}.bib" value="${escapeAttribute(athlete.bib || "")}" /></td>
       <td data-label="姓名"><input data-model="${basePath}.name" value="${escapeAttribute(athlete.name || "")}" /></td>
@@ -1562,6 +1673,10 @@ function handleChange(event) {
   const modelField = event.target.closest("[data-model]");
   if (modelField) {
     setByPath(state.data, modelField.dataset.model, modelField.value);
+    const targetGroup = getGroupFromAthleteModelPath(modelField.dataset.model);
+    if (targetGroup) {
+      recalculateGroupRanks(targetGroup);
+    }
     // 字段修改后仅自动写入本地，不自动上传云端。
     saveLocalData(state.data);
     renderShell();
@@ -1796,6 +1911,7 @@ function addAthlete() {
     result: "",
     note: "",
   });
+  recalculateGroupRanks(group);
   saveLocalData(state.data);
   syncSelections();
   renderView();
@@ -1805,6 +1921,7 @@ function removeAthlete(index) {
   const group = getAdminGroup();
   if (!group || Number.isNaN(index)) return;
   group.athletes.splice(index, 1);
+  recalculateGroupRanks(group);
   saveLocalData(state.data);
   renderView();
 }
@@ -1834,6 +1951,7 @@ function importJson() {
         if (!isValidAppData(parsed)) {
           throw new Error("JSON 结构不合法");
         }
+        recalculateAllGroupRanks(parsed);
         state.data = parsed;
         saveLocalData(state.data);
         syncSelections();
@@ -1886,6 +2004,7 @@ async function downloadFromCloud() {
       return;
     }
 
+    recalculateAllGroupRanks(cloudData);
     state.data = clone(cloudData);
     saveLocalData(state.data);
     syncSelections();
