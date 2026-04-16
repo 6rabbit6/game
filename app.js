@@ -376,6 +376,7 @@ const app = document.querySelector("#app");
 const topNav = document.querySelector("#topNav");
 const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
+const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
 
 bootstrap();
@@ -769,9 +770,13 @@ function setRoute(route) {
 }
 
 function renderShell() {
+  const hideTopBar = state.route === "schedule" || state.route === "groups";
+
   brandName.textContent = state.data.site.brandName;
   systemName.textContent = state.data.site.systemName;
   pageFooter.textContent = state.data.site.footerText;
+  topBar.hidden = hideTopBar;
+  app.className = hideTopBar ? "detail-page" : "";
   topNav.className = state.route === "home" ? "topnav topnav-home" : "topnav";
 
   const navItems = [
@@ -779,7 +784,7 @@ function renderShell() {
     { id: "schedule", label: "赛事日程" },
     { id: "groups", label: "分组详情" },
     { id: "admin", label: "后台管理" },
-  ];
+  ].filter((item) => !(state.route === "home" && item.id === "groups"));
 
   topNav.innerHTML = navItems
     .map(
@@ -846,13 +851,10 @@ function renderHomeView() {
       </div>
     </section>
 
-    <section class="section-head home-section-head">
+    <section class="section-head">
       <div>
         <h2>${escapeHtml(state.data.site.homeSectionTitle)}</h2>
         <p>${escapeHtml(state.data.site.homeSectionDescription)}</p>
-      </div>
-      <div class="table-actions home-section-actions">
-        <button class="ghost-button" data-route="admin">录入后台数据</button>
       </div>
     </section>
 

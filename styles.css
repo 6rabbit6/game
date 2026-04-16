@@ -102,6 +102,10 @@ button {
   box-shadow: var(--shadow);
 }
 
+.topbar[hidden] {
+  display: none !important;
+}
+
 .brand-wrap {
   display: flex;
   align-items: center;
@@ -159,6 +163,10 @@ button {
 
 #app {
   margin-top: 22px;
+}
+
+#app.detail-page {
+  margin-top: 0;
 }
 
 .hero-card,
@@ -810,10 +818,6 @@ button {
     justify-content: stretch;
   }
 
-  .topnav.topnav-home .nav-pill[data-route="groups"] {
-    display: none;
-  }
-
   .topnav.topnav-home .nav-pill {
     display: flex;
     align-items: center;
@@ -847,10 +851,6 @@ button {
 
   .event-card {
     padding: 18px;
-  }
-
-  .home-section-head .home-section-actions {
-    display: none;
   }
 
   .event-card-badge-row {
