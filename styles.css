@@ -349,6 +349,53 @@ button {
   color: var(--primary);
 }
 
+.athlete-action-wrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.athlete-action-toggle {
+  min-width: 36px;
+  padding: 0 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.athlete-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  min-width: 108px;
+  padding: 8px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid rgba(39, 76, 134, 0.12);
+  box-shadow: 0 12px 32px rgba(16, 36, 64, 0.16);
+  display: grid;
+  gap: 6px;
+}
+
+.athlete-action-item {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: rgba(39, 76, 134, 0.08);
+  color: var(--primary);
+  text-align: left;
+}
+
+.athlete-action-item.danger {
+  background: rgba(201, 90, 74, 0.12);
+  color: var(--danger);
+}
+
+.athlete-action-item:hover {
+  transform: translateY(-1px);
+}
+
 .cta-button:hover,
 .ghost-button:hover,
 .danger-button:hover,
@@ -409,6 +456,20 @@ button {
 .admin-table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.table-scroll-x {
+  width: 100%;
+}
+
+.group-table {
+  min-width: 680px;
+}
+
+.group-table th:nth-child(5),
+.group-table td:nth-child(5) {
+  min-width: 180px;
+  white-space: normal;
 }
 
 .schedule-table th,
@@ -618,29 +679,23 @@ button {
   }
 
   .schedule-table thead,
-  .group-table thead,
   .admin-table thead {
     display: none;
   }
 
   .schedule-table,
-  .group-table,
   .admin-table,
   .schedule-table tbody,
-  .group-table tbody,
   .admin-table tbody,
   .schedule-table tr,
-  .group-table tr,
   .admin-table tr,
   .schedule-table td,
-  .group-table td,
   .admin-table td {
     display: block;
     width: 100%;
   }
 
   .schedule-table tr,
-  .group-table tr,
   .admin-table tr {
     margin-bottom: 14px;
     padding: 14px;
@@ -650,7 +705,6 @@ button {
   }
 
   .schedule-table td,
-  .group-table td,
   .admin-table td {
     padding: 10px 0;
     border-bottom: 1px dashed var(--line);
@@ -658,14 +712,12 @@ button {
   }
 
   .schedule-table td:last-child,
-  .group-table td:last-child,
   .admin-table td:last-child {
     border-bottom: 0;
     padding-bottom: 0;
   }
 
   .schedule-table td::before,
-  .group-table td::before,
   .admin-table td::before {
     content: attr(data-label);
     display: block;
@@ -687,5 +739,30 @@ button {
   .admin-table td select,
   .admin-table td textarea {
     width: 100%;
+  }
+
+  .table-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+
+  .group-table {
+    min-width: 680px;
+    font-size: 0.9rem;
+  }
+
+  .group-table th,
+  .group-table td {
+    padding: 12px 10px;
+    white-space: nowrap;
+  }
+
+  .group-table th:nth-child(5),
+  .group-table td:nth-child(5),
+  .group-table th:nth-child(7),
+  .group-table td:nth-child(7) {
+    white-space: normal;
+    min-width: 180px;
   }
 }

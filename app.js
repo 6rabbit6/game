@@ -1079,40 +1079,42 @@ function renderGroupsView() {
     </section>
 
     <section class="table-card">
-      <table class="group-table">
-        <thead>
-          <tr>
-            <th>名次</th>
-            <th>道次</th>
-            <th>号码</th>
-            <th>姓名</th>
-            <th>单位</th>
-            <th>成绩</th>
-            <th>备注</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${
-            currentGroup?.athletes?.length
-              ? currentGroup.athletes
-                  .map(
-                    (athlete) => `
-                      <tr>
-                        <td data-label="名次">${escapeHtml(athlete.rank || "")}</td>
-                        <td data-label="道次">${escapeHtml(athlete.lane || "")}</td>
-                        <td data-label="号码">${escapeHtml(athlete.bib || "")}</td>
-                        <td data-label="姓名">${escapeHtml(athlete.name || "")}</td>
-                        <td data-label="单位">${escapeHtml(athlete.team || "")}</td>
-                        <td data-label="成绩">${escapeHtml(athlete.result || "")}</td>
-                        <td data-label="备注">${escapeHtml(athlete.note || "")}</td>
-                      </tr>
-                    `
-                  )
-                  .join("")
-              : `<tr><td colspan="7">当前分组还没有录入运动员名单。</td></tr>`
-          }
-        </tbody>
-      </table>
+      <div class="table-scroll-x">
+        <table class="group-table">
+          <thead>
+            <tr>
+              <th>名次</th>
+              <th>道次</th>
+              <th>号码</th>
+              <th>姓名</th>
+              <th>单位</th>
+              <th>成绩</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              currentGroup?.athletes?.length
+                ? currentGroup.athletes
+                    .map(
+                      (athlete) => `
+                        <tr>
+                          <td data-label="名次">${escapeHtml(athlete.rank || "")}</td>
+                          <td data-label="道次">${escapeHtml(athlete.lane || "")}</td>
+                          <td data-label="号码">${escapeHtml(athlete.bib || "")}</td>
+                          <td data-label="姓名">${escapeHtml(athlete.name || "")}</td>
+                          <td data-label="单位">${escapeHtml(athlete.team || "")}</td>
+                          <td data-label="成绩">${escapeHtml(athlete.result || "")}</td>
+                          <td data-label="备注">${escapeHtml(athlete.note || "")}</td>
+                        </tr>
+                      `
+                    )
+                    .join("")
+                : `<tr><td colspan="7">当前分组还没有录入运动员名单。</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
     </section>
   `;
 }
