@@ -739,13 +739,15 @@ button {
   }
 
   .schedule-table {
-    min-width: 560px;
-    font-size: 0.84rem;
+    width: 100%;
+    min-width: 0;
+    font-size: 0.82rem;
+    table-layout: fixed;
   }
 
   .schedule-table th,
   .schedule-table td {
-    padding: 8px 6px;
+    padding: 8px 5px;
     white-space: normal;
   }
 
@@ -781,16 +783,8 @@ button {
     min-width: 72px;
   }
 
-  .schedule-table th:nth-child(6),
-  .schedule-table td[data-label="人数"],
-  .schedule-table th:nth-child(7),
-  .schedule-table td[data-label="组数"],
-  .schedule-table th:nth-child(8),
-  .schedule-table td[data-label="录取规则"],
-  .schedule-table th:nth-child(9),
-  .schedule-table td[data-label="备注"],
-  .schedule-table th:nth-child(10),
-  .schedule-table td[data-label="操作"] {
+  .schedule-table th:nth-child(n + 6),
+  .schedule-table td:nth-child(n + 6) {
     display: none;
   }
 
