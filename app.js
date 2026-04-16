@@ -1313,6 +1313,7 @@ function renderAdminView() {
                   <p>当前分组共 ${adminGroup.athletes.length} 名运动员。</p>
                 </div>
                 <div class="field-actions">
+                  <button class="ghost-button" data-admin-action="sort-athletes-by-rank">按名次排序</button>
                   <button class="tiny-button" data-admin-action="add-athlete">新增运动员</button>
                 </div>
               </div>
@@ -1733,6 +1734,9 @@ function runAdminAction(action, dataset = {}) {
     case "add-athlete":
       addAthlete();
       break;
+    case "sort-athletes-by-rank":
+      sortCurrentGroupAthletesByRank();
+      break;
     case "remove-athlete":
       removeAthlete(Number(dataset.athleteIndex));
       break;
@@ -1949,6 +1953,61 @@ function addAthlete() {
     note: "",
   });
   recalculateGroupRanks(group);
+  saveLocalData(state.data);
+  syncSelections();
+  renderView();
+}
+
+function sortCurrentGroupAthletesByRank() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const group = getAdminGroup();
+  if (!group?.athletes?.length) return;
+
+  recalculateGroupRanks(group);
+
+  const parseRankValue = (value) => {
+    if (value == null || value === "") {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  group.athletes = group.athletes
+    .map((athlete, originalIndex) => ({
+      athlete,
+      originalIndex,
+      rankValue: parseRankValue(athlete.rank),
+      timeValue: parseCompetitionTime(athlete.result),
+    }))
+    .sort((left, right) => {
+      const leftHasRank = left.rankValue != null;
+      const rightHasRank = right.rankValue != null;
+
+      if (leftHasRank && !rightHasRank) return -1;
+      if (!leftHasRank && rightHasRank) return 1;
+
+      if (leftHasRank && rightHasRank && left.rankValue !== right.rankValue) {
+        return left.rankValue - right.rankValue;
+      }
+
+      const leftHasTime = left.timeValue != null;
+      const rightHasTime = right.timeValue != null;
+
+      if (leftHasTime && rightHasTime && left.timeValue !== right.timeValue) {
+        return left.timeValue - right.timeValue;
+      }
+
+      if (leftHasTime && !rightHasTime) return -1;
+      if (!leftHasTime && rightHasTime) return 1;
+
+      return left.originalIndex - right.originalIndex;
+    })
+    .map((item) => item.athlete);
+
   saveLocalData(state.data);
   syncSelections();
   renderView();
