@@ -1099,6 +1099,10 @@ function renderGroupsView() {
         <p class="group-mobile-hero-kicker">赛事分组</p>
         <h2>${escapeHtml(event.name)}</h2>
         <p>${escapeHtml(`${entry.division || ""}${entry.gender || ""}${entry.projectName || ""} ${entry.round || ""}`)}</p>
+        <div class="table-actions group-mobile-actions">
+          <button class="ghost-button" data-route="schedule">返回日程</button>
+          <button class="cta-button" data-route="admin">编辑分组</button>
+        </div>
       </div>
     </section>
 

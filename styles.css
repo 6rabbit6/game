@@ -571,6 +571,10 @@ button {
   margin: 10px 0 0;
 }
 
+.group-mobile-actions {
+  margin-top: 16px;
+}
+
 .group-mobile-nav {
   display: flex;
   align-items: center;
@@ -1088,6 +1092,11 @@ button {
     margin: 10px 0 0;
     color: var(--text-soft);
     line-height: 1.7;
+  }
+
+  .group-mobile-actions {
+    gap: 10px;
+    margin-top: 14px;
   }
 
   .group-mobile-switcher-card {
