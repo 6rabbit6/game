@@ -287,6 +287,10 @@ button {
   margin-top: 14px;
 }
 
+.event-card-mobile-cta {
+  display: none;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -799,6 +803,26 @@ button {
     padding: 18px;
   }
 
+  .topnav.topnav-home {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+
+  .topnav.topnav-home .nav-pill[data-route="groups"] {
+    display: none;
+  }
+
+  .topnav.topnav-home .nav-pill {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    justify-content: center;
+    padding: 10px 0;
+    text-align: center;
+  }
+
   .brand-wrap {
     align-items: flex-start;
     flex-direction: column;
@@ -818,10 +842,39 @@ button {
   .section-head {
     align-items: flex-start;
     flex-direction: column;
+    gap: 6px;
   }
 
   .event-card {
     padding: 18px;
+  }
+
+  .home-section-head .home-section-actions {
+    display: none;
+  }
+
+  .event-card-badge-row {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .event-card-mobile-cta {
+    display: inline-flex;
+    min-height: 34px;
+    padding: 0 14px;
+    font-size: 0.88rem;
+  }
+
+  .event-card-location {
+    flex-basis: 100%;
+  }
+
+  .event-card-desktop-cta {
+    display: none;
+  }
+
+  .event-card-actions.no-admin-action {
+    display: none;
   }
 
   .event-meta h3,
@@ -898,8 +951,8 @@ button {
 
   .schedule-table th,
   .schedule-table td {
-    padding: 10px 10px;
-    line-height: 1.5;
+    padding: 8px 8px;
+    line-height: 1.35;
   }
 
   .schedule-table th {
@@ -961,6 +1014,30 @@ button {
 
   .schedule-table tr.row-clickable:active {
     background: rgba(39, 76, 134, 0.08);
+  }
+
+  .event-header {
+    margin-bottom: 12px;
+  }
+
+  .event-header p {
+    margin-top: 4px;
+  }
+
+  .selector-bar {
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 16px;
+  }
+
+  .table-card {
+    padding: 16px;
+  }
+
+  .table-note {
+    margin-top: 10px;
+    font-size: 0.88rem;
+    line-height: 1.55;
   }
 
   .group-table {
@@ -1069,6 +1146,12 @@ button {
     min-height: 30px;
     padding: 0 10px;
     font-size: 0.88rem;
+  }
+
+  .athlete-mobile-bib {
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 0.98rem;
   }
 
   .athlete-mobile-meta {

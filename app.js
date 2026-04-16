@@ -772,6 +772,7 @@ function renderShell() {
   brandName.textContent = state.data.site.brandName;
   systemName.textContent = state.data.site.systemName;
   pageFooter.textContent = state.data.site.footerText;
+  topNav.className = state.route === "home" ? "topnav topnav-home" : "topnav";
 
   const navItems = [
     { id: "home", label: "首页" },
@@ -845,12 +846,12 @@ function renderHomeView() {
       </div>
     </section>
 
-    <section class="section-head">
+    <section class="section-head home-section-head">
       <div>
         <h2>${escapeHtml(state.data.site.homeSectionTitle)}</h2>
         <p>${escapeHtml(state.data.site.homeSectionDescription)}</p>
       </div>
-      <div class="table-actions">
+      <div class="table-actions home-section-actions">
         <button class="ghost-button" data-route="admin">录入后台数据</button>
       </div>
     </section>
@@ -876,14 +877,15 @@ function renderEventCard(event) {
       <div class="event-meta">
         <h3>${escapeHtml(event.name)} <span class="subtle">${escapeHtml(event.stageLabel || "")}</span></h3>
         <p>${escapeHtml(event.summary || "")}</p>
-        <div class="badge-row">
+        <div class="badge-row event-card-badge-row">
           <span class="badge ${statusClass(event.status)}">${escapeHtml(event.status)}</span>
           <span class="badge">${escapeHtml(event.dateRange || "待定")}</span>
-          <span class="badge">${escapeHtml(event.location || "待定场馆")}</span>
+          <button class="cta-button event-card-mobile-cta" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
+          <span class="badge event-card-location">${escapeHtml(event.location || "待定场馆")}</span>
         </div>
       </div>
-      <div class="toolbar-actions">
-        <button class="cta-button" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
+      <div class="toolbar-actions event-card-actions ${state.isAdminAuthenticated ? "has-admin-action" : "no-admin-action"}">
+        <button class="cta-button event-card-desktop-cta" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
         ${
           state.isAdminAuthenticated
             ? `<button class="danger-button" data-remove-event="${event.id}">删除赛事</button>`
@@ -1151,7 +1153,7 @@ function renderGroupsView() {
                     </div>
                     <div class="athlete-mobile-main">
                       <div class="athlete-mobile-head">
-                        <span class="athlete-mobile-bib">#${escapeHtml(athlete.bib || "-")}</span>
+                        <span class="athlete-mobile-bib">${escapeHtml(athlete.bib || "-")}</span>
                         <h3>${escapeHtml(athlete.name || "-")}</h3>
                       </div>
                       <p class="athlete-mobile-team">${escapeHtml(athlete.team || "-")}</p>
