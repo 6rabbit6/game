@@ -890,19 +890,20 @@ button {
   }
 
   .schedule-table {
-    width: max-content;
-    min-width: 100%;
-    font-size: 0.82rem;
+    width: 100%;
+    min-width: 480px;
+    font-size: 0.84rem;
     table-layout: auto;
   }
 
   .schedule-table th,
   .schedule-table td {
-    padding: 10px 8px;
-    line-height: 1.45;
+    padding: 10px 10px;
+    line-height: 1.5;
   }
 
   .schedule-table th {
+    writing-mode: horizontal-tb;
     white-space: nowrap;
     word-break: keep-all;
   }
@@ -922,29 +923,31 @@ button {
 
   .schedule-table th:nth-child(1),
   .schedule-table td:nth-child(1) {
-    width: 76px;
+    width: 84px;
   }
 
   .schedule-table th:nth-child(2),
   .schedule-table td:nth-child(2) {
-    width: 30%;
+    min-width: 120px;
+    width: 140px;
     white-space: normal;
   }
 
   .schedule-table th:nth-child(3),
   .schedule-table td:nth-child(3) {
-    width: 22%;
+    min-width: 92px;
+    width: 108px;
     white-space: normal;
   }
 
   .schedule-table th:nth-child(4),
   .schedule-table td:nth-child(4) {
-    width: 54px;
+    width: 60px;
   }
 
   .schedule-table th:nth-child(5),
   .schedule-table td:nth-child(5) {
-    width: 64px;
+    width: 68px;
   }
 
   .schedule-table th:nth-child(n + 6),
