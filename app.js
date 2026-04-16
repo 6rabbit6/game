@@ -356,6 +356,20 @@ const state = {
   adminDayId: null,
   adminEntryId: null,
   adminGroupId: null,
+  athleteActionMenu: {
+    athleteIndex: null,
+    sourceEntryId: null,
+    sourceGroupId: null,
+    isOpen: false,
+  },
+  promotePanel: {
+    athleteIndex: null,
+    sourceEntryId: null,
+    sourceGroupId: null,
+    targetEntryId: "",
+    targetGroupId: "",
+    isOpen: false,
+  },
 };
 
 const app = document.querySelector("#app");
@@ -740,6 +754,9 @@ function syncSelections() {
   const currentAdminGroup =
     adminGroups.find((group) => group.id === state.adminGroupId) || firstAdminGroup;
   state.adminGroupId = currentAdminGroup?.id || null;
+
+  syncAthleteActionMenuState();
+  syncPromotePanelState();
 }
 
 function setRoute(route) {
@@ -1514,6 +1531,8 @@ function renderAdminLoginView() {
 
 function renderAthleteRow(athlete, athleteIndex, eventIndex, dayIndex, entryIndex, groupIndex) {
   const basePath = `events[${eventIndex}].days[${dayIndex}].entries[${entryIndex}].groups[${groupIndex}].athletes[${athleteIndex}]`;
+  const promotePanelHtml = renderPromotePanelRow(athleteIndex);
+  const actionMenuHtml = renderAthleteActionMenu(athleteIndex);
   return `
     <tr>
       <td data-label="名次"><input value="${escapeAttribute(athlete.rank || "")}" readonly placeholder="自动计算" /></td>
@@ -1523,7 +1542,129 @@ function renderAthleteRow(athlete, athleteIndex, eventIndex, dayIndex, entryInde
       <td data-label="单位"><input data-model="${basePath}.team" value="${escapeAttribute(athlete.team || "")}" /></td>
       <td data-label="成绩"><input data-model="${basePath}.result" value="${escapeAttribute(athlete.result || "")}" /></td>
       <td data-label="备注"><input data-model="${basePath}.note" value="${escapeAttribute(athlete.note || "")}" /></td>
-      <td data-label="操作"><button class="danger-button" data-admin-action="remove-athlete" data-athlete-index="${athleteIndex}">删除</button></td>
+      <td data-label="操作">
+        <div class="athlete-action-wrap" data-athlete-menu-container>
+          <button
+            class="tiny-button athlete-action-toggle"
+            type="button"
+            aria-label="更多操作"
+            data-athlete-menu-toggle
+            data-athlete-index="${athleteIndex}"
+          >
+            ⋯
+          </button>
+          ${actionMenuHtml}
+        </div>
+      </td>
+    </tr>
+    ${promotePanelHtml}
+  `;
+}
+
+function renderAthleteActionMenu(athleteIndex) {
+  const adminEntry = getAdminEntry();
+  const adminGroup = getAdminGroup();
+  const menu = state.athleteActionMenu;
+
+  if (
+    !menu.isOpen ||
+    menu.athleteIndex !== athleteIndex ||
+    menu.sourceEntryId !== adminEntry?.id ||
+    menu.sourceGroupId !== adminGroup?.id
+  ) {
+    return "";
+  }
+
+  return `
+    <div class="athlete-action-menu">
+      <button class="athlete-action-item" type="button" data-admin-action="promote-athlete" data-athlete-index="${athleteIndex}">
+        晋级到
+      </button>
+      <button class="athlete-action-item danger" type="button" data-admin-action="remove-athlete" data-athlete-index="${athleteIndex}">
+        删除
+      </button>
+    </div>
+  `;
+}
+
+function renderPromotePanelRow(athleteIndex) {
+  const adminDay = getAdminDay();
+  const adminEntry = getAdminEntry();
+  const adminGroup = getAdminGroup();
+  const panel = state.promotePanel;
+
+  if (
+    !panel.isOpen ||
+    panel.athleteIndex !== athleteIndex ||
+    panel.sourceEntryId !== adminEntry?.id ||
+    panel.sourceGroupId !== adminGroup?.id ||
+    !adminDay
+  ) {
+    return "";
+  }
+
+  const entryOptions = adminDay.entries || [];
+  const targetEntry = entryOptions.find((entry) => entry.id === panel.targetEntryId) || null;
+  const groupOptions = getAvailablePromoteGroups(targetEntry, adminEntry, adminGroup);
+  const hasGroups = groupOptions.length > 0;
+  const selectedTargetGroupId = hasGroups ? panel.targetGroupId : "";
+  const isSameGroup = panel.targetEntryId === adminEntry?.id && selectedTargetGroupId === adminGroup?.id;
+  const canConfirm = Boolean(panel.targetEntryId && selectedTargetGroupId && hasGroups && !isSameGroup);
+
+  return `
+    <tr class="promote-panel-row">
+      <td colspan="8">
+        <div class="empty-card">
+          <div class="field-grid-3">
+            <div class="field">
+              <label>目标赛程</label>
+              <select data-promote-select="entry">
+                <option value="">请选择目标赛程</option>
+                ${entryOptions
+                  .map(
+                    (entry) => `
+                      <option value="${escapeAttribute(entry.id)}" ${panel.targetEntryId === entry.id ? "selected" : ""}>
+                        ${escapeHtml(`${entry.time || "待定"} · ${entry.projectName || "未命名项目"} · ${entry.round || "未定赛别"}`)}
+                      </option>
+                    `
+                  )
+                  .join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>目标分组</label>
+              <select data-promote-select="group" ${hasGroups ? "" : "disabled"}>
+                <option value="">${hasGroups ? "请选择目标分组" : "目标赛程还没有分组"}</option>
+                ${groupOptions
+                  .map(
+                    (group) => `
+                      <option value="${escapeAttribute(group.id)}" ${selectedTargetGroupId === group.id ? "selected" : ""}>
+                        ${escapeHtml(group.name || "未命名分组")}
+                      </option>
+                    `
+                  )
+                  .join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>操作</label>
+              <div class="field-actions">
+                <button class="cta-button" data-admin-action="confirm-promote-athlete" ${canConfirm ? "" : "disabled"}>确认晋级</button>
+                <button class="ghost-button" data-admin-action="cancel-promote-athlete">取消</button>
+              </div>
+            </div>
+          </div>
+          ${
+            !panel.targetEntryId
+              ? '<p class="hint">请选择目标赛程和目标分组后再确认晋级。</p>'
+              : !hasGroups
+                ? '<p class="hint">当前目标赛程没有可晋级的分组。</p>'
+                : isSameGroup
+                  ? '<p class="hint">不能晋级到当前同一个分组，请选择其他分组。</p>'
+                  : '<p class="hint">晋级会复制当前运动员的号码、姓名和单位，并清空道次、成绩、名次与备注。</p>'
+          }
+        </div>
+      </td>
     </tr>
   `;
 }
@@ -1603,6 +1744,12 @@ function bindEvents() {
 }
 
 function handleClick(event) {
+  const actionMenuToggle = event.target.closest("[data-athlete-menu-toggle]");
+  if (actionMenuToggle) {
+    toggleAthleteActionMenu(Number(actionMenuToggle.dataset.athleteIndex));
+    return;
+  }
+
   const routeTarget = event.target.closest("[data-route]");
   if (routeTarget) {
     setRoute(routeTarget.dataset.route);
@@ -1668,6 +1815,15 @@ function handleClick(event) {
   const authAction = event.target.closest("[data-auth-action]");
   if (authAction) {
     runAuthAction(authAction.dataset.authAction);
+    return;
+  }
+
+  if (
+    state.athleteActionMenu.isOpen &&
+    !event.target.closest("[data-athlete-menu-container]")
+  ) {
+    closeAthleteActionMenu();
+    renderView();
   }
 }
 
@@ -1701,6 +1857,25 @@ function handleChange(event) {
       state.adminGroupId = adminSelect.value;
     }
     syncSelections();
+    renderView();
+    return;
+  }
+
+  const promoteSelect = event.target.closest("[data-promote-select]");
+  if (promoteSelect) {
+    if (promoteSelect.dataset.promoteSelect === "entry") {
+      const nextEntryId = promoteSelect.value;
+      state.promotePanel.targetEntryId = nextEntryId;
+      const adminDay = getAdminDay();
+      const targetEntry = adminDay?.entries.find((entry) => entry.id === nextEntryId) || null;
+      state.promotePanel.targetGroupId = targetEntry?.groups?.[0]?.id || "";
+    }
+
+    if (promoteSelect.dataset.promoteSelect === "group") {
+      state.promotePanel.targetGroupId = promoteSelect.value;
+    }
+
+    syncPromotePanelState();
     renderView();
   }
 }
@@ -1736,6 +1911,16 @@ function runAdminAction(action, dataset = {}) {
       break;
     case "sort-athletes-by-rank":
       sortCurrentGroupAthletesByRank();
+      break;
+    case "promote-athlete":
+      promoteAthlete(Number(dataset.athleteIndex));
+      break;
+    case "confirm-promote-athlete":
+      confirmPromoteAthlete();
+      break;
+    case "cancel-promote-athlete":
+      closePromotePanel();
+      renderView();
       break;
     case "remove-athlete":
       removeAthlete(Number(dataset.athleteIndex));
@@ -2008,9 +2193,272 @@ function sortCurrentGroupAthletesByRank() {
     })
     .map((item) => item.athlete);
 
+  closeAthleteActionMenu();
+  closePromotePanel();
   saveLocalData(state.data);
   syncSelections();
   renderView();
+}
+
+function promoteAthlete(athleteIndex) {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const day = getAdminDay();
+  const sourceEntry = getAdminEntry();
+  const sourceGroup = getAdminGroup();
+
+  if (!day || !sourceEntry || !sourceGroup) {
+    window.alert("请先在后台选中当前比赛日、赛程和分组。");
+    return;
+  }
+
+  if (Number.isNaN(athleteIndex) || !sourceGroup.athletes?.[athleteIndex]) {
+    window.alert("未找到要晋级的运动员。");
+    return;
+  }
+
+  if (!day.entries?.length) {
+    window.alert("当前比赛日还没有可晋级的目标赛程。");
+    return;
+  }
+
+  closeAthleteActionMenu();
+
+  if (
+    state.promotePanel.isOpen &&
+    state.promotePanel.athleteIndex === athleteIndex &&
+    state.promotePanel.sourceEntryId === sourceEntry.id &&
+    state.promotePanel.sourceGroupId === sourceGroup.id
+  ) {
+    closePromotePanel();
+    renderView();
+    return;
+  }
+
+  openPromotePanel(athleteIndex, sourceEntry, sourceGroup, day);
+  renderView();
+}
+
+function openPromotePanel(athleteIndex, sourceEntry, sourceGroup, day) {
+  const defaultTargetEntry =
+    day.entries.find((entry) => entry.id !== sourceEntry.id && entry.groups?.length) ||
+    day.entries.find((entry) => entry.id !== sourceEntry.id) ||
+    day.entries[0] ||
+    null;
+
+  state.promotePanel = {
+    athleteIndex,
+    sourceEntryId: sourceEntry.id,
+    sourceGroupId: sourceGroup.id,
+    targetEntryId: defaultTargetEntry?.id || "",
+    targetGroupId: defaultTargetEntry?.groups?.[0]?.id || "",
+    isOpen: true,
+  };
+
+  syncPromotePanelState();
+}
+
+function closePromotePanel() {
+  state.promotePanel = {
+    athleteIndex: null,
+    sourceEntryId: null,
+    sourceGroupId: null,
+    targetEntryId: "",
+    targetGroupId: "",
+    isOpen: false,
+  };
+}
+
+function toggleAthleteActionMenu(athleteIndex) {
+  const adminEntry = getAdminEntry();
+  const adminGroup = getAdminGroup();
+
+  if (!adminEntry || !adminGroup || Number.isNaN(athleteIndex)) {
+    return;
+  }
+
+  const isSameMenu =
+    state.athleteActionMenu.isOpen &&
+    state.athleteActionMenu.athleteIndex === athleteIndex &&
+    state.athleteActionMenu.sourceEntryId === adminEntry.id &&
+    state.athleteActionMenu.sourceGroupId === adminGroup.id;
+
+  if (isSameMenu) {
+    closeAthleteActionMenu();
+  } else {
+    state.athleteActionMenu = {
+      athleteIndex,
+      sourceEntryId: adminEntry.id,
+      sourceGroupId: adminGroup.id,
+      isOpen: true,
+    };
+  }
+
+  renderView();
+}
+
+function closeAthleteActionMenu() {
+  state.athleteActionMenu = {
+    athleteIndex: null,
+    sourceEntryId: null,
+    sourceGroupId: null,
+    isOpen: false,
+  };
+}
+
+function syncAthleteActionMenuState() {
+  const menu = state.athleteActionMenu;
+  if (!menu?.isOpen) {
+    return;
+  }
+
+  const adminEntry = getAdminEntry();
+  const adminGroup = getAdminGroup();
+
+  if (!adminEntry || !adminGroup) {
+    closeAthleteActionMenu();
+    return;
+  }
+
+  if (menu.sourceEntryId !== adminEntry.id || menu.sourceGroupId !== adminGroup.id) {
+    closeAthleteActionMenu();
+    return;
+  }
+
+  if (!adminGroup.athletes?.[menu.athleteIndex]) {
+    closeAthleteActionMenu();
+  }
+}
+
+function syncPromotePanelState() {
+  const panel = state.promotePanel;
+  if (!panel?.isOpen) {
+    return;
+  }
+
+  const adminDay = getAdminDay();
+  const adminEntry = getAdminEntry();
+  const adminGroup = getAdminGroup();
+
+  if (!adminDay || !adminEntry || !adminGroup) {
+    closePromotePanel();
+    return;
+  }
+
+  if (panel.sourceEntryId !== adminEntry.id || panel.sourceGroupId !== adminGroup.id) {
+    closePromotePanel();
+    return;
+  }
+
+  if (!adminGroup.athletes?.[panel.athleteIndex]) {
+    closePromotePanel();
+    return;
+  }
+
+  const targetEntry = adminDay.entries.find((entry) => entry.id === panel.targetEntryId) || null;
+  if (!targetEntry) {
+    panel.targetEntryId = adminDay.entries[0]?.id || "";
+  }
+
+  const normalizedTargetEntry = adminDay.entries.find((entry) => entry.id === panel.targetEntryId) || null;
+  const targetGroups = getAvailablePromoteGroups(normalizedTargetEntry, adminEntry, adminGroup);
+  if (!targetGroups.length) {
+    panel.targetGroupId = "";
+    return;
+  }
+
+  const targetGroup = targetGroups.find((group) => group.id === panel.targetGroupId) || targetGroups[0] || null;
+  panel.targetGroupId = targetGroup?.id || "";
+}
+
+function getAvailablePromoteGroups(targetEntry, sourceEntry, sourceGroup) {
+  if (!targetEntry?.groups?.length) {
+    return [];
+  }
+
+  return targetEntry.groups.filter((group) => {
+    if (targetEntry.id !== sourceEntry?.id) {
+      return true;
+    }
+
+    return group.id !== sourceGroup?.id;
+  });
+}
+
+function confirmPromoteAthlete() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const panel = state.promotePanel;
+  const day = getAdminDay();
+  const sourceEntry = getAdminEntry();
+  const sourceGroup = getAdminGroup();
+
+  if (!panel?.isOpen || !day || !sourceEntry || !sourceGroup) {
+    window.alert("当前没有可确认的晋级操作。");
+    return;
+  }
+
+  const sourceAthlete = sourceGroup.athletes?.[panel.athleteIndex];
+  if (!sourceAthlete) {
+    closePromotePanel();
+    renderView();
+    window.alert("未找到要晋级的运动员。");
+    return;
+  }
+
+  const targetEntry = day.entries.find((entry) => entry.id === panel.targetEntryId) || null;
+  if (!targetEntry) {
+    window.alert("请选择有效的目标赛程。");
+    return;
+  }
+
+  const targetGroup = targetEntry.groups?.find((group) => group.id === panel.targetGroupId) || null;
+  if (!targetGroup) {
+    window.alert("目标赛程还没有分组。");
+    return;
+  }
+
+  if (targetEntry.id === sourceEntry.id && targetGroup.id === sourceGroup.id) {
+    window.alert("不能晋级到当前同一个分组。");
+    return;
+  }
+
+  const sourceBib = String(sourceAthlete.bib || "").trim();
+  const sourceName = String(sourceAthlete.name || "").trim();
+  const duplicateAthlete = targetGroup.athletes?.find((athlete) => {
+    const targetBib = String(athlete.bib || "").trim();
+    const targetName = String(athlete.name || "").trim();
+    const sameBib = sourceBib && targetBib && sourceBib === targetBib;
+    const sameName = sourceName && targetName && sourceName === targetName;
+    return sameBib || sameName;
+  });
+
+  if (duplicateAthlete) {
+    window.alert("目标分组里已存在同号码或同姓名的运动员，不能重复添加。");
+    return;
+  }
+
+  targetGroup.athletes.push({
+    rank: "",
+    lane: "",
+    bib: sourceAthlete.bib || "",
+    name: sourceAthlete.name || "",
+    team: sourceAthlete.team || "",
+    result: "",
+    note: "",
+  });
+
+  recalculateGroupRanks(targetGroup);
+  closeAthleteActionMenu();
+  closePromotePanel();
+  saveLocalData(state.data);
+  syncSelections();
+  renderView();
+  window.alert("晋级成功");
 }
 
 function removeAthlete(index) {
@@ -2020,8 +2468,21 @@ function removeAthlete(index) {
 
   const group = getAdminGroup();
   if (!group || Number.isNaN(index)) return;
+  const athlete = group.athletes[index];
+  if (!athlete) return;
+
+  const confirmed = window.confirm(`确认删除运动员“${athlete.name || "未命名运动员"}”吗？`);
+  if (!confirmed) {
+    return;
+  }
+
+  closeAthleteActionMenu();
+  if (state.promotePanel.isOpen && state.promotePanel.athleteIndex === index) {
+    closePromotePanel();
+  }
   group.athletes.splice(index, 1);
   recalculateGroupRanks(group);
+  syncPromotePanelState();
   saveLocalData(state.data);
   renderView();
 }
