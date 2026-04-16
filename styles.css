@@ -520,6 +520,12 @@ button {
   padding: 22px 24px;
 }
 
+.group-desktop-header,
+.group-desktop-selector,
+.group-desktop-table {
+  display: block;
+}
+
 .group-mobile-hero,
 .group-mobile-switcher,
 .group-mobile-list {
@@ -541,6 +547,16 @@ button {
   color: var(--primary);
   font-weight: 700;
   letter-spacing: 0.06em;
+}
+
+.group-mobile-hero-card h2,
+.group-mobile-switcher-card h2 {
+  margin: 0;
+}
+
+.group-mobile-hero-card p,
+.group-mobile-switcher-card p {
+  margin: 10px 0 0;
 }
 
 .group-mobile-nav {
@@ -613,6 +629,8 @@ button {
 
 .athlete-mobile-main {
   min-width: 0;
+  display: grid;
+  align-content: center;
 }
 
 .athlete-mobile-head {
@@ -947,14 +965,13 @@ button {
   .group-desktop-header,
   .group-desktop-selector,
   .group-desktop-table {
-    display: none;
+    display: none !important;
   }
 
   .group-mobile-hero,
   .group-mobile-switcher,
   .group-mobile-list {
-    display: grid;
-    gap: 16px;
+    display: block !important;
     margin-bottom: 18px;
   }
 
@@ -977,12 +994,16 @@ button {
   }
 
   .group-mobile-switcher-card {
-    gap: 14px;
     display: grid;
+    gap: 14px;
   }
 
   .group-mobile-switcher-card .field {
     gap: 6px;
+  }
+
+  .group-mobile-switcher-card .hint {
+    margin: 0;
   }
 
   .group-mobile-switcher-card select {
@@ -991,6 +1012,7 @@ button {
   }
 
   .group-mobile-list {
+    display: grid !important;
     gap: 14px;
   }
 
@@ -1000,8 +1022,26 @@ button {
     padding: 16px;
   }
 
+  .athlete-mobile-rank {
+    min-height: 124px;
+  }
+
   .athlete-mobile-rank strong {
     font-size: 1.7rem;
+  }
+
+  .athlete-mobile-head {
+    gap: 8px;
+  }
+
+  .athlete-mobile-head h3 {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  .athlete-mobile-team {
+    margin-top: 8px;
+    font-size: 0.9rem;
   }
 
   .athlete-mobile-bib,
@@ -1009,5 +1049,10 @@ button {
     min-height: 30px;
     padding: 0 10px;
     font-size: 0.88rem;
+  }
+
+  .athlete-mobile-meta {
+    gap: 8px;
+    margin-top: 10px;
   }
 }
