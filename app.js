@@ -2,7 +2,7 @@ const STORAGE_KEY = "event-system-data-v1";
 const SUPABASE_URL = "https://vrismtdascvwxiyepxed.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_OIBFAzMGjT4x3T6Dr90E0A_WB2ILWYE";
 const CLOUD_TABLE_NAME = "app_state";
-const CLOUD_FIRST_HOSTS = ["6rabbit6.github.io"];
+const CLOUD_FIRST_HOSTS = ["6rabbit6.github.io", "game.lcty.online"];
 const cloudClient = createCloudClient();
 
 const defaultData = {

@@ -739,24 +739,63 @@ button {
   }
 
   .schedule-table {
-    min-width: 920px;
-    font-size: 0.9rem;
+    min-width: 740px;
+    font-size: 0.84rem;
   }
 
   .schedule-table th,
   .schedule-table td {
-    padding: 12px 10px;
+    padding: 8px 6px;
+    white-space: normal;
+  }
+
+  .schedule-table th:nth-child(1),
+  .schedule-table td:nth-child(1),
+  .schedule-table th:nth-child(4),
+  .schedule-table td:nth-child(4),
+  .schedule-table th:nth-child(6),
+  .schedule-table td:nth-child(6),
+  .schedule-table th:nth-child(7),
+  .schedule-table td:nth-child(7),
+  .schedule-table th:nth-child(10),
+  .schedule-table td:nth-child(10) {
     white-space: nowrap;
+  }
+
+  .schedule-table th:nth-child(1),
+  .schedule-table td:nth-child(1) {
+    min-width: 68px;
   }
 
   .schedule-table th:nth-child(2),
   .schedule-table td:nth-child(2),
+  .schedule-table th:nth-child(3),
+  .schedule-table td:nth-child(3),
   .schedule-table th:nth-child(8),
   .schedule-table td:nth-child(8),
   .schedule-table th:nth-child(9),
   .schedule-table td:nth-child(9) {
-    min-width: 160px;
+    min-width: 110px;
     white-space: normal;
+  }
+
+  .schedule-table th:nth-child(4),
+  .schedule-table td:nth-child(4),
+  .schedule-table th:nth-child(6),
+  .schedule-table td:nth-child(6),
+  .schedule-table th:nth-child(7),
+  .schedule-table td:nth-child(7) {
+    min-width: 52px;
+  }
+
+  .schedule-table th:nth-child(5),
+  .schedule-table td:nth-child(5) {
+    min-width: 72px;
+  }
+
+  .schedule-table th:nth-child(10),
+  .schedule-table td:nth-child(10) {
+    min-width: 84px;
   }
 
   .group-table {
