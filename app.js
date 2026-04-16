@@ -995,8 +995,13 @@ function renderScheduleRow(entry) {
     `;
   }
 
+  const rowAction =
+    entry.groups?.length
+      ? ` class="row-clickable" data-open-entry-row="${entry.id}"`
+      : "";
+
   return `
-    <tr>
+    <tr${rowAction}>
       <td data-label="比赛时间">${escapeHtml(entry.time || "")}</td>
       <td data-label="项目名称">${escapeHtml(entry.projectName || "")}</td>
       <td data-label="组别">${escapeHtml(entry.division || "")}</td>
@@ -1751,6 +1756,14 @@ function handleClick(event) {
   const actionMenuToggle = event.target.closest("[data-athlete-menu-toggle]");
   if (actionMenuToggle) {
     toggleAthleteActionMenu(Number(actionMenuToggle.dataset.athleteIndex));
+    return;
+  }
+
+  const openEntryRow = event.target.closest("[data-open-entry-row]");
+  if (openEntryRow && window.matchMedia("(max-width: 720px)").matches) {
+    state.selectedEntryId = openEntryRow.dataset.openEntryRow;
+    ensureEntryWithGroups();
+    setRoute("groups");
     return;
   }
 
