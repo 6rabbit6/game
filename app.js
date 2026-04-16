@@ -884,7 +884,6 @@ function renderEventCard(event) {
       </div>
       <div class="toolbar-actions">
         <button class="cta-button" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
-        <button class="ghost-button" data-open-event="${event.id}" data-route-target="groups">查看分组</button>
         ${
           state.isAdminAuthenticated
             ? `<button class="danger-button" data-remove-event="${event.id}">删除赛事</button>`
