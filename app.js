@@ -953,29 +953,31 @@ function renderScheduleView() {
     </section>
 
     <section class="table-card">
-      <table class="schedule-table">
-        <thead>
-          <tr>
-            <th>比赛时间</th>
-            <th>项目名称</th>
-            <th>组别</th>
-            <th>性别</th>
-            <th>赛别</th>
-            <th>人数</th>
-            <th>组数</th>
-            <th>录取规则</th>
-            <th>备注</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${(day?.entries || []).map(renderScheduleRow).join("") || `
+      <div class="table-scroll-x">
+        <table class="schedule-table">
+          <thead>
             <tr>
-              <td colspan="10">当前比赛日还没有录入赛程。</td>
+              <th>比赛时间</th>
+              <th>项目名称</th>
+              <th>组别</th>
+              <th>性别</th>
+              <th>赛别</th>
+              <th>人数</th>
+              <th>组数</th>
+              <th>录取规则</th>
+              <th>备注</th>
+              <th>操作</th>
             </tr>
-          `}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            ${(day?.entries || []).map(renderScheduleRow).join("") || `
+              <tr>
+                <td colspan="10">当前比赛日还没有录入赛程。</td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+      </div>
       <p class="table-note">说明：后台新增或修改条目后，这里的数据会同步更新。</p>
     </section>
   `;
