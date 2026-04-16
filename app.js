@@ -1045,9 +1045,15 @@ function renderGroupsView() {
   }
 
   const currentGroup = getCurrentGroup();
+  const currentGroupIndex = Math.max(
+    0,
+    entry.groups.findIndex((group) => group.id === currentGroup?.id)
+  );
+  const previousGroup = entry.groups[currentGroupIndex - 1] || null;
+  const nextGroup = entry.groups[currentGroupIndex + 1] || null;
 
   return `
-    <section class="panel">
+    <section class="panel group-desktop-header">
       <div class="group-header">
         <h2>${escapeHtml(event.name)}</h2>
         <p>${escapeHtml(`${entry.division || ""}${entry.gender || ""}${entry.projectName || ""} ${entry.round || ""}`)}</p>
@@ -1065,7 +1071,7 @@ function renderGroupsView() {
       </div>
     </section>
 
-    <section class="selector-bar">
+    <section class="selector-bar group-desktop-selector">
       <div class="toolbar">
         <div>
           <div class="entry-title">${escapeHtml(currentGroup?.name || "")} / 共 ${entry.groups.length} 组</div>
@@ -1085,7 +1091,86 @@ function renderGroupsView() {
       </div>
     </section>
 
-    <section class="table-card">
+    <section class="group-mobile-hero">
+      <div class="group-mobile-hero-card">
+        <p class="group-mobile-hero-kicker">赛事分组</p>
+        <h2>${escapeHtml(event.name)}</h2>
+        <p>${escapeHtml(`${entry.division || ""}${entry.gender || ""}${entry.projectName || ""} ${entry.round || ""}`)}</p>
+      </div>
+    </section>
+
+    <section class="group-mobile-switcher">
+      <div class="group-mobile-switcher-card">
+        <div class="group-mobile-nav">
+          <button
+            class="group-mobile-nav-button"
+            ${previousGroup ? `data-select-group="${previousGroup.id}"` : "disabled"}
+            aria-label="上一组"
+          >
+            ‹
+          </button>
+          <div class="group-mobile-nav-center">
+            <p class="group-mobile-nav-meta">当前第 ${currentGroupIndex + 1} 组 / 共 ${entry.groups.length} 组</p>
+            <div class="group-mobile-nav-title">${escapeHtml(currentGroup?.name || "")}</div>
+          </div>
+          <button
+            class="group-mobile-nav-button"
+            ${nextGroup ? `data-select-group="${nextGroup.id}"` : "disabled"}
+            aria-label="下一组"
+          >
+            ›
+          </button>
+        </div>
+        <div class="field">
+          <label for="group-mobile-select">切换分组</label>
+          <select id="group-mobile-select" data-group-select-mobile>
+            ${entry.groups
+              .map(
+                (group) => `
+                  <option value="${group.id}" ${group.id === currentGroup?.id ? "selected" : ""}>
+                    ${escapeHtml(group.name)}
+                  </option>
+                `
+              )
+              .join("")}
+          </select>
+        </div>
+        <p class="hint">${escapeHtml(currentGroup?.summary || "可在后台补充分组说明。")}</p>
+      </div>
+    </section>
+
+    <section class="group-mobile-list">
+      ${
+        currentGroup?.athletes?.length
+          ? currentGroup.athletes
+              .map(
+                (athlete) => `
+                  <article class="athlete-mobile-card">
+                    <div class="athlete-mobile-rank">
+                      <span class="athlete-mobile-rank-label">名次</span>
+                      <strong>${escapeHtml(athlete.rank || "-")}</strong>
+                    </div>
+                    <div class="athlete-mobile-main">
+                      <div class="athlete-mobile-head">
+                        <span class="athlete-mobile-bib">#${escapeHtml(athlete.bib || "-")}</span>
+                        <h3>${escapeHtml(athlete.name || "-")}</h3>
+                      </div>
+                      <p class="athlete-mobile-team">${escapeHtml(athlete.team || "-")}</p>
+                      <div class="athlete-mobile-meta">
+                        <span class="athlete-mobile-chip">道次 ${escapeHtml(athlete.lane || "-")}</span>
+                        <span class="athlete-mobile-chip">成绩 ${escapeHtml(athlete.result || "-")}</span>
+                        <span class="athlete-mobile-chip">备注 ${escapeHtml(athlete.note || "-")}</span>
+                      </div>
+                    </div>
+                  </article>
+                `
+              )
+              .join("")
+          : `<div class="empty-card"><p class="hint">当前分组还没有录入运动员名单。</p></div>`
+      }
+    </section>
+
+    <section class="table-card group-desktop-table">
       <div class="table-scroll-x">
         <table class="group-table">
           <thead>
@@ -1873,6 +1958,14 @@ function handleChange(event) {
     if (adminSelect.dataset.adminSelect === "group") {
       state.adminGroupId = adminSelect.value;
     }
+    syncSelections();
+    renderView();
+    return;
+  }
+
+  const mobileGroupSelect = event.target.closest("[data-group-select-mobile]");
+  if (mobileGroupSelect) {
+    state.selectedGroupId = mobileGroupSelect.value;
     syncSelections();
     renderView();
     return;
