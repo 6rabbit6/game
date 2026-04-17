@@ -732,6 +732,28 @@ button {
   resize: vertical;
 }
 
+.athlete-import-field {
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid rgba(39, 76, 134, 0.1);
+  border-radius: 18px;
+  background: rgba(248, 251, 255, 0.82);
+}
+
+.athlete-import-textarea {
+  min-height: 140px;
+  font-family: var(--font-sans);
+  line-height: 1.65;
+}
+
+.athlete-import-hint {
+  margin-top: 2px;
+}
+
+.athlete-import-actions {
+  margin-top: 4px;
+}
+
 .admin-section {
   margin-top: 22px;
 }

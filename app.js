@@ -1069,7 +1069,7 @@ function renderGroupsView() {
         </div>
         <div class="toolbar-actions">
           <button class="ghost-button" data-route="schedule">返回日程</button>
-          <button class="cta-button" data-route="admin">编辑分组</button>
+          <button class="cta-button" data-admin-action="open-current-group-in-admin">编辑分组</button>
         </div>
       </div>
     </section>
@@ -1101,7 +1101,7 @@ function renderGroupsView() {
         <p>${escapeHtml(`${entry.division || ""}${entry.gender || ""}${entry.projectName || ""} ${entry.round || ""}`)}</p>
         <div class="table-actions group-mobile-actions">
           <button class="ghost-button" data-route="schedule">返回日程</button>
-          <button class="cta-button" data-route="admin">编辑分组</button>
+          <button class="cta-button" data-admin-action="open-current-group-in-admin">编辑分组</button>
         </div>
       </div>
     </section>
@@ -1227,6 +1227,10 @@ function renderAdminView() {
   const adminDay = getAdminDay();
   const adminEntry = getAdminEntry();
   const adminGroup = getAdminGroup();
+  const currentAdminEntryIndex = adminDay && adminEntry ? findEntryIndex(adminDay, adminEntry.id) : -1;
+  const isFirstAdminEntry = currentAdminEntryIndex <= 0;
+  const isLastAdminEntry =
+    !adminDay?.entries?.length || currentAdminEntryIndex === adminDay.entries.length - 1;
 
   return `
     <section class="admin-card">
@@ -1273,7 +1277,7 @@ function renderAdminView() {
                   .map(
                     (entry) => `
                       <option value="${entry.id}" ${entry.id === adminEntry?.id ? "selected" : ""}>
-                        ${escapeHtml(entry.time || "--")} · ${escapeHtml(entry.projectName || "未命名项目")}
+                        ${escapeHtml(formatEntryOptionLabel(entry))}
                       </option>
                     `
                   )
@@ -1331,7 +1335,14 @@ function renderAdminView() {
           </div>
           ${
             adminEntry
-              ? `<div class="field-actions"><button class="danger-button" data-admin-action="remove-entry">删除当前赛程</button></div>`
+              ? `
+                <div class="field-actions">
+                  <button class="ghost-button" data-admin-action="move-entry-up" ${isFirstAdminEntry ? "disabled" : ""}>上移赛程</button>
+                  <button class="ghost-button" data-admin-action="move-entry-down" ${isLastAdminEntry ? "disabled" : ""}>下移赛程</button>
+                  <button class="tiny-button" data-admin-action="add-entry-after-current">新增到后面</button>
+                  <button class="danger-button" data-admin-action="remove-entry">删除当前赛程</button>
+                </div>
+              `
               : ""
           }
         </div>
@@ -1433,6 +1444,20 @@ function renderAdminView() {
                 <div class="field-actions">
                   <button class="ghost-button" data-admin-action="sort-athletes-by-rank">按名次排序</button>
                   <button class="tiny-button" data-admin-action="add-athlete">新增运动员</button>
+                </div>
+              </div>
+              <div class="field athlete-import-field">
+                <label for="athlete-bulk-import">批量粘贴导入</label>
+                <textarea
+                  id="athlete-bulk-import"
+                  class="athlete-import-textarea"
+                  data-athlete-import-text
+                  placeholder="按行粘贴 Excel / WPS 数据，默认列顺序：道次\t号码\t姓名\t单位"
+                ></textarea>
+                <p class="hint athlete-import-hint">支持按 Tab 分列、按行导入。空行会自动跳过，额外列会忽略。</p>
+                <div class="field-actions athlete-import-actions">
+                  <button class="ghost-button" data-admin-action="import-athletes-bulk" data-import-mode="append">追加导入</button>
+                  <button class="cta-button" data-admin-action="import-athletes-bulk" data-import-mode="replace">清空后导入</button>
                 </div>
               </div>
               <table class="admin-table">
@@ -2014,8 +2039,17 @@ function runAdminAction(action, dataset = {}) {
     case "add-entry":
       addEntry();
       break;
+    case "add-entry-after-current":
+      addEntryAfterCurrent();
+      break;
     case "remove-entry":
       removeEntry();
+      break;
+    case "move-entry-up":
+      moveCurrentEntry(-1);
+      break;
+    case "move-entry-down":
+      moveCurrentEntry(1);
       break;
     case "add-group":
       addGroup();
@@ -2028,6 +2062,12 @@ function runAdminAction(action, dataset = {}) {
       break;
     case "sort-athletes-by-rank":
       sortCurrentGroupAthletesByRank();
+      break;
+    case "open-current-group-in-admin":
+      openCurrentGroupInAdmin();
+      break;
+    case "import-athletes-bulk":
+      importAthletesBulk(dataset.importMode);
       break;
     case "promote-athlete":
       promoteAthlete(Number(dataset.athleteIndex));
@@ -2163,25 +2203,64 @@ function addEntry() {
 
   const day = getAdminDay();
   if (!day) return;
-  const nextEntry = {
-    id: uid("entry"),
-    time: "09:00",
-    projectName: "新项目",
-    division: "待定组别",
-    gender: "待定",
-    round: "预赛",
-    participantCount: "0",
-    groupCount: "0",
-    qualification: "待定",
-    note: "",
-    type: "race",
-    groups: [],
-  };
+  const nextEntry = createDefaultEntry();
   day.entries.push(nextEntry);
   state.adminEntryId = nextEntry.id;
   if (day.id === state.selectedDayId) {
     state.selectedEntryId = nextEntry.id;
   }
+  saveLocalData(state.data);
+  syncSelections();
+  renderView();
+}
+
+function addEntryAfterCurrent() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const day = getAdminDay();
+  const entry = getAdminEntry();
+  if (!day || !entry) return;
+
+  const currentIndex = findEntryIndex(day, entry.id);
+  if (currentIndex < 0) return;
+
+  const nextEntry = createDefaultEntry();
+  day.entries.splice(currentIndex + 1, 0, nextEntry);
+  state.adminEntryId = nextEntry.id;
+  if (day.id === state.selectedDayId) {
+    state.selectedEntryId = nextEntry.id;
+  }
+  saveLocalData(state.data);
+  syncSelections();
+  renderView();
+}
+
+function moveCurrentEntry(delta) {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const day = getAdminDay();
+  const entry = getAdminEntry();
+  if (!day || !entry || !day.entries?.length) return;
+
+  const currentIndex = findEntryIndex(day, entry.id);
+  if (currentIndex < 0) return;
+
+  const targetIndex = currentIndex + delta;
+  if (targetIndex < 0 || targetIndex >= day.entries.length) {
+    return;
+  }
+
+  [day.entries[currentIndex], day.entries[targetIndex]] = [day.entries[targetIndex], day.entries[currentIndex]];
+
+  state.adminEntryId = entry.id;
+  if (day.id === state.selectedDayId && state.selectedEntryId === entry.id) {
+    state.selectedEntryId = entry.id;
+  }
+
   saveLocalData(state.data);
   syncSelections();
   renderView();
@@ -2198,6 +2277,23 @@ function removeEntry() {
   saveLocalData(state.data);
   syncSelections();
   renderView();
+}
+
+function createDefaultEntry() {
+  return {
+    id: uid("entry"),
+    time: "09:00",
+    projectName: "新项目",
+    division: "待定组别",
+    gender: "待定",
+    round: "预赛",
+    participantCount: "0",
+    groupCount: "0",
+    qualification: "待定",
+    note: "",
+    type: "race",
+    groups: [],
+  };
 }
 
 function addGroup() {
@@ -2258,6 +2354,107 @@ function addAthlete() {
   saveLocalData(state.data);
   syncSelections();
   renderView();
+}
+
+function openCurrentGroupInAdmin() {
+  const currentEvent = getCurrentEvent();
+  const currentDay = getCurrentDay();
+  const currentEntry = getCurrentEntry();
+  const currentGroup = getCurrentGroup();
+
+  if (!currentEvent || !currentDay || !currentEntry || !currentGroup) {
+    window.alert("当前分组上下文不完整，暂时无法直接定位到后台编辑。");
+    return;
+  }
+
+  state.adminEventId = currentEvent.id;
+  state.adminDayId = currentDay.id;
+  state.adminEntryId = currentEntry.id;
+  state.adminGroupId = currentGroup.id;
+
+  setRoute("admin");
+}
+
+function importAthletesBulk(mode = "append") {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+
+  const group = getAdminGroup();
+  if (!group) {
+    window.alert("请先在后台选中一个分组，再执行批量导入。");
+    return;
+  }
+
+  const textarea = document.querySelector("[data-athlete-import-text]");
+  const rawText = textarea?.value || "";
+
+  if (!rawText.trim()) {
+    window.alert("请先粘贴要导入的运动员数据。");
+    return;
+  }
+
+  let importedAthletes = [];
+  try {
+    importedAthletes = parseBulkAthleteImportText(rawText);
+  } catch (error) {
+    window.alert(`导入失败：${error.message}`);
+    return;
+  }
+
+  if (!importedAthletes.length) {
+    window.alert("没有识别到可导入的数据，请检查粘贴内容是否为空。");
+    return;
+  }
+
+  if (mode === "replace" && group.athletes.length) {
+    const confirmed = window.confirm(`确认清空当前分组已有的 ${group.athletes.length} 名运动员，并导入新的 ${importedAthletes.length} 条数据吗？`);
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  group.athletes = mode === "replace"
+    ? importedAthletes
+    : [...group.athletes, ...importedAthletes];
+
+  recalculateGroupRanks(group);
+  closeAthleteActionMenu();
+  closePromotePanel();
+  saveLocalData(state.data);
+  syncSelections();
+  renderView();
+  window.alert(`导入成功，已${mode === "replace" ? "清空后导入" : "追加导入"} ${importedAthletes.length} 名运动员。`);
+}
+
+function parseBulkAthleteImportText(rawText) {
+  const lines = String(rawText || "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
+
+  return lines.map((line, index) => {
+    const columns = line.split("\t").map((value) => value.trim());
+
+    if (columns.length < 4) {
+      throw new Error(`第 ${index + 1} 行列数不足，请按“道次\t号码\t姓名\t单位”四列粘贴。`);
+    }
+
+    const [lane, bib, name, team] = columns;
+
+    if (!name) {
+      throw new Error(`第 ${index + 1} 行缺少姓名，请检查后重试。`);
+    }
+
+    return {
+      rank: "",
+      lane,
+      bib,
+      name,
+      team,
+      result: "",
+      note: "",
+    };
+  });
 }
 
 function sortCurrentGroupAthletesByRank() {
@@ -2922,6 +3119,20 @@ function findEntryIndex(day, entryId) {
 
 function findGroupIndex(entry, groupId) {
   return entry.groups.findIndex((group) => group.id === groupId);
+}
+
+function formatEntryOptionLabel(entry) {
+  const parts = [
+    entry?.time,
+    entry?.projectName || "未命名项目",
+    entry?.division,
+    entry?.gender,
+    entry?.round,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return parts.join(" · ");
 }
 
 function statusClass(status) {
