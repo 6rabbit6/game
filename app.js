@@ -1249,7 +1249,10 @@ function renderGroupsView() {
                       <div class="athlete-mobile-meta">
                         <span class="athlete-mobile-chip">道次 ${escapeHtml(athlete.lane || "-")}</span>
                         <span class="athlete-mobile-chip">成绩 ${escapeHtml(athlete.result || "-")}</span>
-                        <span class="athlete-mobile-chip">备注 ${escapeHtml(athlete.note || "-")}</span>
+                        <span class="athlete-mobile-chip athlete-mobile-note-chip">
+                          备注
+                          <span class="${athlete.note ? "athlete-mobile-note-value" : ""}">${escapeHtml(athlete.note || "-")}</span>
+                        </span>
                       </div>
                     </div>
                   </article>
@@ -1394,8 +1397,6 @@ function renderAdminView() {
           <button class="ghost-button" data-admin-action="download-cloud">从云端拉取</button>
           <button class="cta-button" data-admin-action="upload-cloud">上传到云端</button>
           <button class="danger-button" data-admin-action="reset-default-data">恢复默认演示数据</button>
-        </div>
-        <div class="selector-actions">
           <button class="ghost-button" data-admin-action="export-json">导出 JSON</button>
           <button class="ghost-button" data-admin-action="import-json">导入 JSON</button>
         </div>
@@ -1409,6 +1410,94 @@ function renderAdminView() {
           }
         </p>
       </div>
+
+      <section class="admin-section">
+        <div class="toolbar">
+          <div>
+            <h3>分组与运动员</h3>
+            <p>分组名称、摘要和名单可直接维护，前台“分组详情”页会实时展示。</p>
+          </div>
+          ${
+            adminGroup
+              ? `<div class="field-actions"><button class="danger-button" data-admin-action="remove-group">删除当前分组</button></div>`
+              : ""
+          }
+        </div>
+        ${
+          adminGroup && adminEntry && adminEvent && adminDay
+            ? `
+              <div class="form-grid">
+                ${renderField(
+                  "分组名称",
+                  `events[${findEventIndex(adminEvent.id)}].days[${findDayIndex(adminEvent, adminDay.id)}].entries[${findEntryIndex(adminDay, adminEntry.id)}].groups[${findGroupIndex(adminEntry, adminGroup.id)}].name`,
+                  adminGroup.name
+                )}
+                ${renderField(
+                  "分组摘要",
+                  `events[${findEventIndex(adminEvent.id)}].days[${findDayIndex(adminEvent, adminDay.id)}].entries[${findEntryIndex(adminDay, adminEntry.id)}].groups[${findGroupIndex(adminEntry, adminGroup.id)}].summary`,
+                  adminGroup.summary
+                )}
+              </div>
+              <div class="toolbar" id="admin-athlete-list">
+                <div>
+                  <h3>运动员名单</h3>
+                  <p>当前分组共 ${adminGroup.athletes.length} 名运动员。</p>
+                </div>
+                <div class="field-actions">
+                  <button class="ghost-button" data-admin-action="sort-athletes-by-rank">按名次排序</button>
+                  <button class="tiny-button" data-admin-action="add-athlete">新增运动员</button>
+                </div>
+              </div>
+              <div class="field athlete-import-field">
+                <label for="athlete-bulk-import">批量粘贴导入</label>
+                <textarea
+                  id="athlete-bulk-import"
+                  class="athlete-import-textarea"
+                  data-athlete-import-text
+                  placeholder="按行粘贴 Excel / WPS 数据，默认列顺序：道次\t号码\t姓名\t单位"
+                ></textarea>
+                <p class="hint athlete-import-hint">支持按 Tab 分列、按行导入。空行会自动跳过，额外列会忽略。</p>
+                <div class="field-actions athlete-import-actions">
+                  <button class="ghost-button" data-admin-action="import-athletes-bulk" data-import-mode="append">追加导入</button>
+                  <button class="cta-button" data-admin-action="import-athletes-bulk" data-import-mode="replace">清空后导入</button>
+                </div>
+              </div>
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>名次</th>
+                    <th>道次</th>
+                    <th>号码</th>
+                    <th>姓名</th>
+                    <th>单位</th>
+                    <th>成绩</th>
+                    <th>备注</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${
+                    adminGroup.athletes.length
+                      ? adminGroup.athletes
+                          .map((athlete, athleteIndex) =>
+                            renderAthleteRow(
+                              athlete,
+                              athleteIndex,
+                              findEventIndex(adminEvent.id),
+                              findDayIndex(adminEvent, adminDay.id),
+                              findEntryIndex(adminDay, adminEntry.id),
+                              findGroupIndex(adminEntry, adminGroup.id)
+                            )
+                          )
+                          .join("")
+                      : `<tr><td colspan="8">当前分组还没有运动员名单，点击右上角新增即可。</td></tr>`
+                  }
+                </tbody>
+              </table>
+            `
+            : renderHintCard("当前赛程还没有分组，请点击“新增分组”。")
+        }
+      </section>
 
       <section class="admin-section">
         <div class="toolbar">
@@ -1489,94 +1578,6 @@ function renderAdminView() {
               </div>
             `
             : renderHintCard("当前比赛日还没有赛程，请点击“新增赛程”。")
-        }
-      </section>
-
-      <section class="admin-section">
-        <div class="toolbar">
-          <div>
-            <h3>分组与运动员</h3>
-            <p>分组名称、摘要和名单可直接维护，前台“分组详情”页会实时展示。</p>
-          </div>
-          ${
-            adminGroup
-              ? `<div class="field-actions"><button class="danger-button" data-admin-action="remove-group">删除当前分组</button></div>`
-              : ""
-          }
-        </div>
-        ${
-          adminGroup && adminEntry && adminEvent && adminDay
-            ? `
-              <div class="form-grid">
-                ${renderField(
-                  "分组名称",
-                  `events[${findEventIndex(adminEvent.id)}].days[${findDayIndex(adminEvent, adminDay.id)}].entries[${findEntryIndex(adminDay, adminEntry.id)}].groups[${findGroupIndex(adminEntry, adminGroup.id)}].name`,
-                  adminGroup.name
-                )}
-                ${renderField(
-                  "分组摘要",
-                  `events[${findEventIndex(adminEvent.id)}].days[${findDayIndex(adminEvent, adminDay.id)}].entries[${findEntryIndex(adminDay, adminEntry.id)}].groups[${findGroupIndex(adminEntry, adminGroup.id)}].summary`,
-                  adminGroup.summary
-                )}
-              </div>
-              <div class="toolbar">
-                <div>
-                  <h3>运动员名单</h3>
-                  <p>当前分组共 ${adminGroup.athletes.length} 名运动员。</p>
-                </div>
-                <div class="field-actions">
-                  <button class="ghost-button" data-admin-action="sort-athletes-by-rank">按名次排序</button>
-                  <button class="tiny-button" data-admin-action="add-athlete">新增运动员</button>
-                </div>
-              </div>
-              <div class="field athlete-import-field">
-                <label for="athlete-bulk-import">批量粘贴导入</label>
-                <textarea
-                  id="athlete-bulk-import"
-                  class="athlete-import-textarea"
-                  data-athlete-import-text
-                  placeholder="按行粘贴 Excel / WPS 数据，默认列顺序：道次\t号码\t姓名\t单位"
-                ></textarea>
-                <p class="hint athlete-import-hint">支持按 Tab 分列、按行导入。空行会自动跳过，额外列会忽略。</p>
-                <div class="field-actions athlete-import-actions">
-                  <button class="ghost-button" data-admin-action="import-athletes-bulk" data-import-mode="append">追加导入</button>
-                  <button class="cta-button" data-admin-action="import-athletes-bulk" data-import-mode="replace">清空后导入</button>
-                </div>
-              </div>
-              <table class="admin-table">
-                <thead>
-                  <tr>
-                    <th>名次</th>
-                    <th>道次</th>
-                    <th>号码</th>
-                    <th>姓名</th>
-                    <th>单位</th>
-                    <th>成绩</th>
-                    <th>备注</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${
-                    adminGroup.athletes.length
-                      ? adminGroup.athletes
-                          .map((athlete, athleteIndex) =>
-                            renderAthleteRow(
-                              athlete,
-                              athleteIndex,
-                              findEventIndex(adminEvent.id),
-                              findDayIndex(adminEvent, adminDay.id),
-                              findEntryIndex(adminDay, adminEntry.id),
-                              findGroupIndex(adminEntry, adminGroup.id)
-                            )
-                          )
-                          .join("")
-                      : `<tr><td colspan="8">当前分组还没有运动员名单，点击右上角新增即可。</td></tr>`
-                  }
-                </tbody>
-              </table>
-            `
-            : renderHintCard("当前赛程还没有分组，请点击“新增分组”。")
         }
       </section>
 
@@ -1947,6 +1948,15 @@ function renderMissingState(text) {
   `;
 }
 
+function scrollToAdminAthleteList() {
+  requestAnimationFrame(() => {
+    document.querySelector("#admin-athlete-list")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  });
+}
+
 function bindEvents() {
   document.addEventListener("click", handleClick);
   document.addEventListener("change", handleChange);
@@ -2087,21 +2097,25 @@ function handleChange(event) {
 
   const adminSelect = event.target.closest("[data-admin-select]");
   if (adminSelect) {
-    if (adminSelect.dataset.adminSelect === "event") {
+    const adminSelectType = adminSelect.dataset.adminSelect;
+    if (adminSelectType === "event") {
       state.adminEventId = adminSelect.value;
     }
-    if (adminSelect.dataset.adminSelect === "day") {
+    if (adminSelectType === "day") {
       state.adminDayId = adminSelect.value;
     }
-    if (adminSelect.dataset.adminSelect === "entry") {
+    if (adminSelectType === "entry") {
       state.adminEntryId = adminSelect.value;
     }
-    if (adminSelect.dataset.adminSelect === "group") {
+    if (adminSelectType === "group") {
       state.adminGroupId = adminSelect.value;
     }
     syncSelections();
     renderView();
     replaceHistoryState();
+    if (adminSelectType === "group") {
+      scrollToAdminAthleteList();
+    }
     return;
   }
 
