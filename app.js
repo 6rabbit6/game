@@ -452,6 +452,18 @@ function parseCompetitionTime(value) {
     return Number(normalized);
   }
 
+  const minutesQuoteMatch = normalized.match(/^(\d+)'(\d{1,2})''(\d+)$/);
+  if (minutesQuoteMatch) {
+    const [, minutesText, secondsText, fractionText] = minutesQuoteMatch;
+    return Number(minutesText) * 60 + Number(`${secondsText}.${fractionText}`);
+  }
+
+  const secondsQuoteMatch = normalized.match(/^(\d+)''(\d+)$/);
+  if (secondsQuoteMatch) {
+    const [, secondsText, fractionText] = secondsQuoteMatch;
+    return Number(`${secondsText}.${fractionText}`);
+  }
+
   const parseSecondsPart = (secondsText) => {
     const cleaned = secondsText
       .replace(/["']+$/g, "")
@@ -844,8 +856,8 @@ function renderHomeView() {
           <p class="hero-desc">${escapeHtml(state.data.site.heroDescription)}</p>
         </div>
         <div class="hero-stat-stack">
-          ${renderStatCard(total, "全部赛事")}
-          ${renderStatCard(live, "进行中")}
+          ${renderStatCard(total, "全部赛事", true)}
+          ${renderStatCard(live, "进行中", true)}
           ${renderStatCard(waiting, "未开始")}
         </div>
       </div>
@@ -858,15 +870,15 @@ function renderHomeView() {
       </div>
     </section>
 
-    <section class="event-list">
+    <section class="event-list" id="event-list">
       ${state.data.events.map(renderEventCard).join("")}
     </section>
   `;
 }
 
-function renderStatCard(value, label) {
+function renderStatCard(value, label, isClickable = false) {
   return `
-    <article class="stat-card">
+    <article class="stat-card ${isClickable ? "stat-card-clickable" : ""}" ${isClickable ? 'data-event-list-jump tabindex="0" role="button"' : ""}>
       <strong>${escapeHtml(String(value))}</strong>
       <span>${escapeHtml(label)}</span>
     </article>
@@ -875,14 +887,13 @@ function renderStatCard(value, label) {
 
 function renderEventCard(event) {
   return `
-    <article class="event-card panel">
+    <article class="event-card panel" data-open-event="${event.id}" data-route-target="schedule">
       <div class="event-meta">
         <h3>${escapeHtml(event.name)} <span class="subtle">${escapeHtml(event.stageLabel || "")}</span></h3>
         <p>${escapeHtml(event.summary || "")}</p>
         <div class="badge-row event-card-badge-row">
           <span class="badge ${statusClass(event.status)}">${escapeHtml(event.status)}</span>
           <span class="badge">${escapeHtml(event.dateRange || "待定")}</span>
-          <button class="cta-button event-card-mobile-cta" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
           <span class="badge event-card-location">${escapeHtml(event.location || "待定场馆")}</span>
         </div>
       </div>
@@ -1870,6 +1881,12 @@ function bindEvents() {
 }
 
 function handleClick(event) {
+  const eventListJump = event.target.closest("[data-event-list-jump]");
+  if (eventListJump) {
+    document.querySelector("#event-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
   const actionMenuToggle = event.target.closest("[data-athlete-menu-toggle]");
   if (actionMenuToggle) {
     toggleAthleteActionMenu(Number(actionMenuToggle.dataset.athleteIndex));
@@ -1890,15 +1907,6 @@ function handleClick(event) {
     return;
   }
 
-  const openEventButton = event.target.closest("[data-open-event]");
-  if (openEventButton) {
-    state.selectedEventId = openEventButton.dataset.openEvent;
-    syncSelections();
-    const nextRoute = openEventButton.dataset.routeTarget || "schedule";
-    setRoute(nextRoute);
-    return;
-  }
-
   const removeEventButton = event.target.closest("[data-remove-event]");
   if (removeEventButton) {
     if (!ensureAdminAuthenticated()) {
@@ -1913,6 +1921,15 @@ function handleClick(event) {
     if (!confirmed) return;
 
     removeEventById(eventId);
+    return;
+  }
+
+  const openEventButton = event.target.closest("[data-open-event]");
+  if (openEventButton) {
+    state.selectedEventId = openEventButton.dataset.openEvent;
+    syncSelections();
+    const nextRoute = openEventButton.dataset.routeTarget || "schedule";
+    setRoute(nextRoute);
     return;
   }
 

@@ -229,6 +229,18 @@ button {
   border: 1px solid rgba(39, 76, 134, 0.08);
 }
 
+.stat-card-clickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.stat-card-clickable:hover,
+.stat-card-clickable:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(39, 76, 134, 0.2);
+  outline: none;
+}
+
 .stat-card strong {
   display: block;
   font-size: 2rem;
@@ -274,6 +286,7 @@ button {
   gap: 18px;
   align-items: center;
   padding: 24px 28px;
+  cursor: pointer;
 }
 
 .event-meta h3,
@@ -293,10 +306,6 @@ button {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 14px;
-}
-
-.event-card-mobile-cta {
-  display: none;
 }
 
 .badge {
@@ -884,15 +893,8 @@ button {
     gap: 8px;
   }
 
-  .event-card-mobile-cta {
-    display: inline-flex;
-    min-height: 34px;
-    padding: 0 14px;
-    font-size: 0.88rem;
-  }
-
   .event-card-location {
-    flex-basis: 100%;
+    flex-basis: auto;
   }
 
   .event-card-desktop-cta {
