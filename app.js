@@ -864,7 +864,11 @@ function renderShell() {
     { id: "schedule", label: "赛事日程" },
     { id: "groups", label: "分组详情" },
     { id: "admin", label: "后台管理" },
-  ].filter((item) => !(state.route === "home" && item.id === "groups"));
+  ].filter((item) => {
+    if (state.route === "home" && item.id === "groups") return false;
+    if (state.route === "admin" && item.id === "admin") return false;
+    return true;
+  });
 
   topNav.innerHTML = navItems
     .map(
@@ -1946,9 +1950,24 @@ function renderMissingState(text) {
 function bindEvents() {
   document.addEventListener("click", handleClick);
   document.addEventListener("change", handleChange);
+  document.addEventListener("keydown", handleKeydown);
   window.addEventListener("popstate", (event) => {
     restoreHistoryState(event.state);
   });
+}
+
+function handleKeydown(event) {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  const loginField = event.target.closest("#login-email, #login-password");
+  if (!loginField) {
+    return;
+  }
+
+  event.preventDefault();
+  loginAdmin();
 }
 
 function handleClick(event) {
