@@ -386,6 +386,7 @@ async function bootstrap() {
   syncSelections();
   renderShell();
   renderView();
+  replaceHistoryState();
   bindEvents();
 
   if (shouldPreferCloudOnStartup()) {
@@ -713,6 +714,7 @@ async function hydrateCloudStateOnStartup() {
     syncSelections();
     renderShell();
     renderView();
+    replaceHistoryState();
   } catch (error) {
     console.warn("启动时拉取云端正式数据失败，已保留本地数据。", error);
   }
@@ -777,6 +779,72 @@ function setRoute(route) {
   if (route === "groups") {
     ensureEntryWithGroups();
   }
+  renderShell();
+  renderView();
+  pushHistoryState();
+}
+
+function getHistoryState() {
+  return {
+    appHistory: true,
+    route: state.route,
+    selectedEventId: state.selectedEventId,
+    selectedDayId: state.selectedDayId,
+    selectedEntryId: state.selectedEntryId,
+    selectedGroupId: state.selectedGroupId,
+    adminEventId: state.adminEventId,
+    adminDayId: state.adminDayId,
+    adminEntryId: state.adminEntryId,
+    adminGroupId: state.adminGroupId,
+  };
+}
+
+function isSameHistoryState(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return [
+    "route",
+    "selectedEventId",
+    "selectedDayId",
+    "selectedEntryId",
+    "selectedGroupId",
+    "adminEventId",
+    "adminDayId",
+    "adminEntryId",
+    "adminGroupId",
+  ].every((key) => left[key] === right[key]);
+}
+
+function pushHistoryState() {
+  const nextState = getHistoryState();
+  if (isSameHistoryState(window.history.state, nextState)) {
+    return;
+  }
+  window.history.pushState(nextState, "", window.location.href);
+}
+
+function replaceHistoryState() {
+  window.history.replaceState(getHistoryState(), "", window.location.href);
+}
+
+function restoreHistoryState(historyState) {
+  if (!historyState?.appHistory) {
+    return;
+  }
+
+  state.route = historyState.route || "home";
+  state.selectedEventId = historyState.selectedEventId || null;
+  state.selectedDayId = historyState.selectedDayId || null;
+  state.selectedEntryId = historyState.selectedEntryId || null;
+  state.selectedGroupId = historyState.selectedGroupId || null;
+  state.adminEventId = historyState.adminEventId || null;
+  state.adminDayId = historyState.adminDayId || null;
+  state.adminEntryId = historyState.adminEntryId || null;
+  state.adminGroupId = historyState.adminGroupId || null;
+
+  syncSelections();
   renderShell();
   renderView();
 }
@@ -1878,6 +1946,9 @@ function renderMissingState(text) {
 function bindEvents() {
   document.addEventListener("click", handleClick);
   document.addEventListener("change", handleChange);
+  window.addEventListener("popstate", (event) => {
+    restoreHistoryState(event.state);
+  });
 }
 
 function handleClick(event) {
@@ -1938,6 +2009,7 @@ function handleClick(event) {
     state.selectedDayId = selectDayButton.dataset.selectDay;
     syncSelections();
     renderView();
+    replaceHistoryState();
     return;
   }
 
@@ -1954,6 +2026,7 @@ function handleClick(event) {
     state.selectedGroupId = selectGroupButton.dataset.selectGroup;
     syncSelections();
     renderView();
+    replaceHistoryState();
     return;
   }
 
@@ -2009,6 +2082,7 @@ function handleChange(event) {
     }
     syncSelections();
     renderView();
+    replaceHistoryState();
     return;
   }
 
@@ -2017,6 +2091,7 @@ function handleChange(event) {
     state.selectedGroupId = mobileGroupSelect.value;
     syncSelections();
     renderView();
+    replaceHistoryState();
     return;
   }
 
