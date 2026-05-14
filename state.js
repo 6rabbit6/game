@@ -440,6 +440,11 @@ function initializeState() {
   publishedScheduleLoadedAt: "",
   publishedScheduleActiveVersion: "",
   frontendScheduleDataSource: "none",
+  publishedGroupDetail: null,
+  publishedGroupDetailStatus: "idle",
+  publishedGroupDetailError: "",
+  publishedGroupDetailLoadedAt: "",
+  frontendGroupDataSource: "none",
   cloudRuntime: {
     sdkLoaded: false,
     clientReady: false,
@@ -470,6 +475,15 @@ function initializeState() {
     publishedScheduleError: "",
     scheduleLoadedAppState: false,
     groupDetailDataSource: "",
+    frontendGroupDataSource: "none",
+    publishedGroupDetailStatus: "idle",
+    currentStructuredEntryId: "",
+    publishedEntryGroupsCount: null,
+    publishedGroupAthletesCount: null,
+    publishedResultsCount: null,
+    publishedGroupDetailLoadedAt: "",
+    publishedGroupDetailError: "",
+    groupDetailLoadedAppState: false,
     homeLoadedAppState: false,
     detailAppStateStatus: "idle",
     detailAppStateError: "",
@@ -487,10 +501,12 @@ function syncSelections() {
   const publishedHomeEvent = Array.isArray(state.publishedEvents)
     ? state.publishedEvents.find((event) => event.id === state.selectedEventId) || null
     : null;
+  const publishedGroupDetail = getCurrentPublishedGroupDetail();
   const shouldPreserveExternalEvent =
-    state.route === "schedule" && Boolean(state.selectedEventId);
+    ["schedule", "groups"].includes(state.route) && Boolean(state.selectedEventId);
   const currentEvent =
     events.find((event) => event.id === state.selectedEventId) ||
+    publishedGroupDetail?.event ||
     publishedScheduleEvent ||
     publishedHomeEvent ||
     (shouldPreserveExternalEvent ? null : firstEvent);
@@ -511,7 +527,7 @@ function syncSelections() {
     entries.find((entry) => entry.id === state.selectedEntryId) || firstEntryWithGroups;
   state.selectedEntryId = currentEntry?.id || null;
 
-  const groups = currentEntry?.groups || [];
+  const groups = publishedGroupDetail?.groups || currentEntry?.groups || [];
   const firstGroup = groups[0] || null;
   const currentGroup = groups.find((group) => group.id === state.selectedGroupId) || firstGroup;
   state.selectedGroupId = currentGroup?.id || null;
@@ -653,6 +669,10 @@ function ensureEntryWithGroups() {
 }
 
 function getCurrentEvent() {
+  const publishedGroupDetail = getCurrentPublishedGroupDetail();
+  if (publishedGroupDetail?.event) {
+    return publishedGroupDetail.event;
+  }
   const publishedScheduleEvent = getCurrentPublishedScheduleEvent();
   if (publishedScheduleEvent) {
     return publishedScheduleEvent;
@@ -666,6 +686,17 @@ function getCurrentPublishedScheduleEvent() {
     return null;
   }
   return event;
+}
+
+function getCurrentPublishedGroupDetail() {
+  const detail = state.publishedGroupDetail || null;
+  if (!detail || state.route !== "groups") {
+    return null;
+  }
+  if (state.selectedEntryId && detail.entryId !== state.selectedEntryId) {
+    return null;
+  }
+  return detail;
 }
 
 function getCurrentDay() {

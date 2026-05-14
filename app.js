@@ -4,7 +4,7 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-structured-schedule-1";
+const APP_BUILD_VERSION = "20260514-structured-groups-1";
 const STRUCTURED_PUBLISH_TABLES = {
   publishVersions: "publish_versions",
   events: "published_events",
@@ -341,6 +341,178 @@ function mapPublishedScheduleEntryRow(row) {
     isPublishedScheduleEntry: true,
   };
 }
+
+async function loadPublishedGroupsForEntry(entryId) {
+  ensureCloudClientReady();
+
+  const activeVersion = state.publishedSchedule?.publishVersion
+    ? { version: state.publishedSchedule.publishVersion }
+    : await loadActivePublishVersion();
+  const publishVersion = activeVersion?.version || "";
+  if (!publishVersion || !entryId) {
+    return createEmptyPublishedGroupDetail(entryId, publishVersion);
+  }
+
+  const context = getPublishedScheduleContextForEntry(entryId);
+  const eventId = context.entry?.eventId || context.event?.id || state.selectedEventId || "";
+
+  const [groupsResult, athletesResult, resultsResult] = await Promise.all([
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.entryGroups)
+      .select("id, event_id, entry_id, name, summary, sort_order")
+      .eq("publish_version", publishVersion)
+      .eq("entry_id", entryId)
+      .order("sort_order", { ascending: true }),
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.groupAthletes)
+      .select("id, event_id, entry_id, group_id, bib, lane, name, organization, gender, birth_date, rank, result, note, source, original_competition_key, original_group_name, original_project_name, merge_type, sort_order")
+      .eq("publish_version", publishVersion)
+      .eq("entry_id", entryId)
+      .order("group_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("lane", { ascending: true })
+      .order("bib", { ascending: true }),
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.results)
+      .select("id, event_id, entry_id, group_id, athlete_id, result, rank, merged_overall_rank, original_rank, qualification_type, status")
+      .eq("publish_version", publishVersion)
+      .eq("entry_id", entryId),
+  ]);
+
+  if (groupsResult.error) {
+    throw groupsResult.error;
+  }
+  if (athletesResult.error) {
+    throw athletesResult.error;
+  }
+  if (resultsResult.error) {
+    throw resultsResult.error;
+  }
+
+  const resultsByAthleteId = new Map();
+  (resultsResult.data || []).forEach((result) => {
+    if (result.athlete_id) {
+      resultsByAthleteId.set(result.athlete_id, result);
+    }
+  });
+
+  const athletesByGroup = new Map();
+  (athletesResult.data || []).forEach((row) => {
+    const athlete = mapPublishedGroupAthleteRow(row);
+    const result = resultsByAthleteId.get(athlete.id) || null;
+    mergePublishedResultIntoAthlete(athlete, result);
+    const list = athletesByGroup.get(athlete.groupId) || [];
+    list.push(athlete);
+    athletesByGroup.set(athlete.groupId, list);
+  });
+
+  const groups = (groupsResult.data || []).map((row) => {
+    const group = mapPublishedEntryGroupRow(row);
+    group.athletes = athletesByGroup.get(group.id) || [];
+    return group;
+  });
+
+  return {
+    publishVersion,
+    eventId,
+    dayId: context.day?.id || context.entry?.dayId || state.selectedDayId || "",
+    entryId,
+    event: context.event || null,
+    day: context.day || null,
+    entry: context.entry ? { ...context.entry, groups } : { id: entryId, groups },
+    groups,
+    entryGroupsCount: groups.length,
+    groupAthletesCount: (athletesResult.data || []).length,
+    resultsCount: (resultsResult.data || []).length,
+  };
+}
+
+function createEmptyPublishedGroupDetail(entryId, publishVersion = "") {
+  const context = getPublishedScheduleContextForEntry(entryId);
+  return {
+    publishVersion,
+    eventId: context.event?.id || state.selectedEventId || "",
+    dayId: context.day?.id || state.selectedDayId || "",
+    entryId,
+    event: context.event || null,
+    day: context.day || null,
+    entry: context.entry ? { ...context.entry, groups: [] } : { id: entryId, groups: [] },
+    groups: [],
+    entryGroupsCount: 0,
+    groupAthletesCount: 0,
+    resultsCount: 0,
+  };
+}
+
+function getPublishedScheduleContextForEntry(entryId) {
+  const event = state.publishedSchedule?.event || null;
+  if (!event) {
+    return { event: null, day: null, entry: null };
+  }
+
+  for (const day of event.days || []) {
+    const entry = (day.entries || []).find((item) => item.id === entryId);
+    if (entry) {
+      return { event, day, entry };
+    }
+  }
+
+  return { event, day: null, entry: null };
+}
+
+function mapPublishedEntryGroupRow(row) {
+  return {
+    id: row.id || "",
+    eventId: row.event_id || "",
+    entryId: row.entry_id || "",
+    name: row.name || "",
+    summary: row.summary || "",
+    sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+    athletes: [],
+    isPublishedGroup: true,
+  };
+}
+
+function mapPublishedGroupAthleteRow(row) {
+  return {
+    id: row.id || "",
+    eventId: row.event_id || "",
+    entryId: row.entry_id || "",
+    groupId: row.group_id || "",
+    bib: row.bib || "",
+    lane: row.lane || "",
+    name: row.name || "",
+    team: row.organization || "",
+    organization: row.organization || "",
+    gender: row.gender || "",
+    birthDate: row.birth_date || "",
+    rank: row.rank || "",
+    result: row.result || "",
+    note: row.note || "",
+    source: row.source || "",
+    originalCompetitionKey: row.original_competition_key || "",
+    originalGroupName: row.original_group_name || "",
+    originalProjectName: row.original_project_name || "",
+    mergeType: row.merge_type || "",
+    sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+    isPublishedAthlete: true,
+  };
+}
+
+function mergePublishedResultIntoAthlete(athlete, result) {
+  if (!result) {
+    return athlete;
+  }
+
+  athlete.result = result.result || athlete.result || "";
+  athlete.rank = result.rank || athlete.rank || "";
+  athlete.mergedOverallRank = result.merged_overall_rank || "";
+  athlete.originalRank = result.original_rank || "";
+  athlete.qualificationType = result.qualification_type || "";
+  athlete.resultStatus = result.status || "";
+  return athlete;
+}
+
 
 async function saveCloudData(data) {
   ensureCloudClientReady();
@@ -755,6 +927,9 @@ function updateCloudRuntimeStatus(patch = {}) {
   if (patch.frontendScheduleDataSource) {
     state.frontendScheduleDataSource = patch.frontendScheduleDataSource;
   }
+  if (patch.frontendGroupDataSource) {
+    state.frontendGroupDataSource = patch.frontendGroupDataSource;
+  }
   state.cloudRuntime = {
     ...(state.cloudRuntime || {}),
     sdkLoaded: Boolean(window.supabase?.createClient),
@@ -956,6 +1131,10 @@ async function hydratePublishedScheduleForEvent(eventId, options = {}) {
     state.publishedScheduleLoadedAt = loadedAt;
     state.publishedScheduleActiveVersion = result.publishVersion || "";
     state.frontendScheduleDataSource = result.event ? "structured-schedule" : "none";
+    state.publishedGroupDetail = null;
+    state.publishedGroupDetailStatus = "idle";
+    state.publishedGroupDetailError = "";
+    state.frontendGroupDataSource = "none";
 
     if (result.event) {
       state.selectedEventId = result.event.id;
@@ -983,7 +1162,9 @@ async function hydratePublishedScheduleForEvent(eventId, options = {}) {
       publishedScheduleError: "",
       activePublishVersion: result.publishVersion || state.cloudRuntime?.activePublishVersion || "",
       scheduleLoadedAppState: false,
-      groupDetailDataSource: "app_state_compat",
+      frontendGroupDataSource: "none",
+      groupDetailDataSource: "none",
+      groupDetailLoadedAppState: false,
       lastCloudSyncAt: loadedAt,
     });
 
@@ -1011,9 +1192,87 @@ async function hydratePublishedScheduleForEvent(eventId, options = {}) {
   }
 }
 
+async function hydratePublishedGroupDetailForEntry(entryId) {
+  if (!shouldPreferCloudOnStartup() || state.frontendScheduleDataSource !== "structured-schedule") {
+    return false;
+  }
+
+  const context = getPublishedScheduleContextForEntry(entryId);
+  const expectedGroupCount = Number(context.entry?.groupCount || 0);
+  const startedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  state.publishedGroupDetailStatus = "loading";
+  state.publishedGroupDetailError = "";
+  state.frontendGroupDataSource = "structured-groups";
+  updateCloudRuntimeStatus({
+    frontendGroupDataSource: "structured-groups",
+    groupDetailDataSource: "structured-groups",
+    publishedGroupDetailStatus: "loading",
+    currentStructuredEntryId: entryId || "",
+    publishedGroupDetailError: "",
+    groupDetailLoadedAppState: false,
+  });
+
+  try {
+    const detail = await loadPublishedGroupsForEntry(entryId);
+    const loadedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+    const hasGroups = detail.groups.length > 0;
+    const missingPublishedGroups = expectedGroupCount > 0 && !hasGroups;
+    state.publishedGroupDetail = detail;
+    state.publishedGroupDetailStatus = missingPublishedGroups ? "failed" : "success";
+    state.publishedGroupDetailLoadedAt = loadedAt;
+    state.publishedGroupDetailError = missingPublishedGroups
+      ? "该赛程标记为已分组，但未找到已发布分组数据，请重新发布赛事数据。"
+      : "";
+    state.frontendGroupDataSource = "structured-groups";
+    state.selectedEventId = detail.eventId || state.selectedEventId;
+    state.selectedDayId = detail.dayId || state.selectedDayId;
+    state.selectedEntryId = detail.entryId || entryId;
+    state.selectedGroupId = hasGroups
+      ? detail.groups.some((group) => group.id === state.selectedGroupId)
+        ? state.selectedGroupId
+        : detail.groups[0].id
+      : null;
+
+    updateCloudRuntimeStatus({
+      frontendGroupDataSource: "structured-groups",
+      groupDetailDataSource: "structured-groups",
+      publishedGroupDetailStatus: state.publishedGroupDetailStatus,
+      currentStructuredEntryId: entryId || "",
+      publishedEntryGroupsCount: detail.entryGroupsCount,
+      publishedGroupAthletesCount: detail.groupAthletesCount,
+      publishedResultsCount: detail.resultsCount,
+      publishedGroupDetailLoadedAt: loadedAt || startedAt,
+      publishedGroupDetailError: state.publishedGroupDetailError,
+      groupDetailLoadedAppState: false,
+    });
+
+    return hasGroups;
+  } catch (error) {
+    const message = error.message || "结构化分组读取失败。";
+    state.publishedGroupDetail = createEmptyPublishedGroupDetail(entryId, state.publishedSchedule?.publishVersion || "");
+    state.publishedGroupDetailStatus = "failed";
+    state.publishedGroupDetailError = message;
+    state.frontendGroupDataSource = "structured-groups";
+    updateCloudRuntimeStatus({
+      frontendGroupDataSource: "structured-groups",
+      groupDetailDataSource: "structured-groups",
+      publishedGroupDetailStatus: "failed",
+      currentStructuredEntryId: entryId || "",
+      publishedEntryGroupsCount: 0,
+      publishedGroupAthletesCount: 0,
+      publishedResultsCount: 0,
+      publishedGroupDetailLoadedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      publishedGroupDetailError: message,
+      groupDetailLoadedAppState: false,
+    });
+    console.warn("结构化分组读取失败。", error);
+    return false;
+  }
+}
+
 function setRoute(route) {
   state.route = route;
-  if (route === "groups") {
+  if (route === "groups" && state.frontendGroupDataSource !== "structured-groups") {
     ensureEntryWithGroups();
   }
   renderShell();
@@ -1090,7 +1349,8 @@ function renderView() {
   let viewHtml = "";
 
   const hasStructuredScheduleEvent = Boolean(state.publishedSchedule?.event && state.route === "schedule");
-  if (!state.data.events.length && state.route !== "admin" && !hasStructuredScheduleEvent) {
+  const hasStructuredGroupDetail = Boolean(state.publishedGroupDetail && state.route === "groups");
+  if (!state.data.events.length && state.route !== "admin" && !hasStructuredScheduleEvent && !hasStructuredGroupDetail) {
     viewHtml = `
       <section class="empty-card">
         <h2>还没有赛事数据</h2>
@@ -1370,7 +1630,7 @@ function renderScheduleDayNavigator(event, day) {
   const previousDay = days[currentIndex - 1] || null;
   const nextDay = days[currentIndex + 1] || null;
   const entryCount = day?.entries?.length || 0;
-  const groupedCount = (day?.entries || []).filter((entry) => entry.groups?.length).length;
+  const groupedCount = (day?.entries || []).filter((entry) => hasScheduleEntryGroups(entry)).length;
 
   return `
     <section class="schedule-day-calendar">
@@ -1463,6 +1723,17 @@ function getNonRaceScheduleEntryLabel(entry) {
 }
 
 function renderGroupsView() {
+  const structuredContext = getPublishedGroupDetailRenderContext();
+  if (structuredContext?.status === "loading") {
+    return renderGroupsStatusCard("正在加载分组详情", "正在读取已发布分组和运动员名单。");
+  }
+  if (structuredContext?.status === "failed") {
+    return renderGroupsStatusCard("结构化分组读取失败", structuredContext.error || "请重新发布赛事数据后再试。");
+  }
+  if (structuredContext) {
+    return renderGroupsDetailMarkup(structuredContext.event, structuredContext.day, structuredContext.entry);
+  }
+
   const event = getCurrentEvent();
   const day = getCurrentDay();
   const entry = getCurrentEntry();
@@ -1484,7 +1755,54 @@ function renderGroupsView() {
     `;
   }
 
-  const currentGroup = getCurrentGroup();
+  return renderGroupsDetailMarkup(event, day, entry);
+}
+
+function getPublishedGroupDetailRenderContext() {
+  if (state.frontendGroupDataSource !== "structured-groups" && state.publishedGroupDetailStatus === "idle") {
+    return null;
+  }
+
+  const detail = state.publishedGroupDetail || null;
+  if (state.publishedGroupDetailStatus === "loading") {
+    return { status: "loading" };
+  }
+  if (state.publishedGroupDetailStatus === "failed") {
+    return { status: "failed", error: state.publishedGroupDetailError };
+  }
+  if (!detail || detail.entryId !== state.selectedEntryId) {
+    return null;
+  }
+  if (!detail.groups?.length) {
+    return { status: "failed", error: state.publishedGroupDetailError || "这个项目还没有录入分组。" };
+  }
+
+  const entry = {
+    ...(detail.entry || {}),
+    groups: detail.groups || [],
+  };
+  return {
+    event: detail.event || getCurrentEvent(),
+    day: detail.day || getCurrentDay(),
+    entry,
+  };
+}
+
+function renderGroupsStatusCard(title, message) {
+  return `
+    <section class="empty-card">
+      <h2>${escapeHtml(title)}</h2>
+      <p class="hint">${escapeHtml(message)}</p>
+      <div class="table-actions">
+        <button class="ghost-button" data-route="schedule">回到赛程</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderGroupsDetailMarkup(event, day, entry) {
+  const currentGroup =
+    entry.groups.find((group) => group.id === state.selectedGroupId) || entry.groups[0] || null;
   const currentGroupIndex = Math.max(
     0,
     entry.groups.findIndex((group) => group.id === currentGroup?.id)
@@ -3986,7 +4304,13 @@ function renderCloudDiagnosticsPanel() {
     ["published_schedule_entries 数量", formatNullableCount(status.publishedScheduleEntriesCount)],
     ["赛程加载时间", status.publishedScheduleLoadedAt || "-"],
     ["赛程页加载 app_state 整包", status.scheduleLoadedAppState ? "是" : "否"],
-    ["分组详情数据源", status.groupDetailDataSource || "structured-groups 未启用"],
+    ["分组详情数据源", status.groupDetailDataSource || state.frontendGroupDataSource || "none"],
+    ["当前结构化 entryId", status.currentStructuredEntryId || "-"],
+    ["published_entry_groups 数量", formatNullableCount(status.publishedEntryGroupsCount)],
+    ["published_group_athletes 数量", formatNullableCount(status.publishedGroupAthletesCount)],
+    ["published_results 数量", formatNullableCount(status.publishedResultsCount)],
+    ["分组详情加载时间", status.publishedGroupDetailLoadedAt || "-"],
+    ["分组详情加载 app_state 整包", status.groupDetailLoadedAppState ? "是" : "否"],
     ["构建版本", status.buildVersion || APP_BUILD_VERSION],
   ];
   if (status.lastCloudSyncAt) {
@@ -4041,6 +4365,11 @@ function renderCloudDiagnosticsPanel() {
       ${
         status.publishedScheduleError
           ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedScheduleError)}</p>`
+          : ""
+      }
+      ${
+        status.publishedGroupDetailError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedGroupDetailError)}</p>`
           : ""
       }
       ${renderStructuredPublishCounts(status.structuredPublishCounts)}
@@ -7215,22 +7544,10 @@ async function openScheduleRoute() {
 async function openEntryFromSchedule(entryId) {
   state.selectedEntryId = entryId;
 
-  if (state.frontendScheduleDataSource === "structured-schedule" && shouldPreferCloudOnStartup() && state.dataSource !== "cloud") {
-    const hasDetails = await loadAppStateForPublishedEventDetails(state.selectedEventId);
-    updateCloudRuntimeStatus({
-      groupDetailDataSource: hasDetails ? "app_state_compat" : "structured-groups 未启用",
-      scheduleLoadedAppState: hasDetails,
-    });
-    if (!hasDetails) {
-      showAppDialog({
-        eyebrow: "分组详情",
-        title: "分组详情暂未加载",
-        message: "赛程页已读取结构化发布表；分组详情结构化读取将在下一阶段支持。请确认 app_state 快照已发布。",
-        confirmText: "知道了",
-        cancelText: "",
-      });
-      return;
-    }
+  if (state.frontendScheduleDataSource === "structured-schedule" && shouldPreferCloudOnStartup()) {
+    await hydratePublishedGroupDetailForEntry(entryId);
+    setRoute("groups");
+    return;
   }
 
   ensureEntryWithGroups();
