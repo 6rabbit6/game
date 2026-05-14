@@ -4,7 +4,20 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-local-supabase-sdk";
+const APP_BUILD_VERSION = "20260514-structured-2";
+const STRUCTURED_PUBLISH_TABLES = {
+  publishVersions: "publish_versions",
+  events: "published_events",
+  eventDays: "published_event_days",
+  scheduleEntries: "published_schedule_entries",
+  entryGroups: "published_entry_groups",
+  groupAthletes: "published_group_athletes",
+  results: "published_results",
+  registrationImports: "published_registration_imports",
+  manualRegistrations: "published_manual_registrations",
+  changeRecords: "published_change_records",
+  bookExports: "published_book_exports",
+};
 const cloudClient = createCloudClient();
 const appDialogActions = new Map();
 let appNoticeTimer = null;
@@ -122,6 +135,294 @@ async function saveCloudData(data) {
   return insertedRows?.[0]?.id || null;
 }
 
+async function saveStructuredPublishData(data, options = {}) {
+  ensureCloudClientReady();
+
+  const payload = createStructuredPublishPayload(data);
+  const publishRows = payload.publishVersions.map((row) => ({
+    ...row,
+    app_state_id: options.appStateId == null ? null : String(options.appStateId),
+  }));
+
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.publishVersions, publishRows);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.events, payload.events);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.eventDays, payload.eventDays);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.scheduleEntries, payload.scheduleEntries);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.entryGroups, payload.entryGroups);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.groupAthletes, payload.groupAthletes);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.results, payload.results);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.registrationImports, payload.registrationImports);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.manualRegistrations, payload.manualRegistrations);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.changeRecords, payload.changeRecords);
+  await insertStructuredRows(STRUCTURED_PUBLISH_TABLES.bookExports, payload.bookExports);
+
+  const now = new Date().toISOString();
+  const { error: archiveError } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.publishVersions)
+    .update({ status: "archived" })
+    .eq("status", "active")
+    .neq("version", payload.publishVersion);
+
+  if (archiveError) {
+    throw archiveError;
+  }
+
+  const { error: activateError } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.publishVersions)
+    .update({ status: "active", published_at: now })
+    .eq("version", payload.publishVersion);
+
+  if (activateError) {
+    throw activateError;
+  }
+
+  return {
+    publishVersion: payload.publishVersion,
+    counts: getStructuredPublishCounts(payload),
+  };
+}
+
+async function insertStructuredRows(tableName, rows) {
+  if (!rows?.length) {
+    return;
+  }
+
+  const { error } = await cloudClient.from(tableName).insert(rows);
+  if (error) {
+    throw error;
+  }
+}
+
+function getStructuredPublishCounts(payload) {
+  return {
+    events: payload.events.length,
+    eventDays: payload.eventDays.length,
+    scheduleEntries: payload.scheduleEntries.length,
+    entryGroups: payload.entryGroups.length,
+    groupAthletes: payload.groupAthletes.length,
+    results: payload.results.length,
+    registrationImports: payload.registrationImports.length,
+    manualRegistrations: payload.manualRegistrations.length,
+    changeRecords: payload.changeRecords.length,
+    bookExports: payload.bookExports.length,
+  };
+}
+
+function createStructuredPublishPayload(data) {
+  const publishVersion = createPublishVersionId();
+  const payload = {
+    publishVersion,
+    publishVersions: [],
+    events: [],
+    eventDays: [],
+    scheduleEntries: [],
+    entryGroups: [],
+    groupAthletes: [],
+    results: [],
+    registrationImports: [],
+    manualRegistrations: [],
+    changeRecords: [],
+    bookExports: [],
+  };
+
+  (data.events || []).forEach((event, eventIndex) => {
+    const eventId = normalizeText(event.id) || createStableId("event", event.name || eventIndex);
+    payload.publishVersions.push({
+      id: `${publishVersion}:${eventId}`,
+      event_id: eventId,
+      version: publishVersion,
+      status: "staging",
+      published_by: state.adminEmail || "",
+    });
+    payload.events.push({
+      id: eventId,
+      publish_version: publishVersion,
+      name: event.name || "",
+      status: event.status || "",
+      stage_label: event.stageLabel || "",
+      date_range: event.dateRange || "",
+      location: event.location || "",
+      summary: event.summary || "",
+      description: event.description || "",
+      display_order: eventIndex,
+    });
+
+    (event.days || []).forEach((day, dayIndex) => {
+      const dayId = normalizeText(day.id) || createStableId("day", `${eventId}|${dayIndex}`);
+      payload.eventDays.push({
+        id: dayId,
+        event_id: eventId,
+        publish_version: publishVersion,
+        label: day.label || "",
+        date: day.date || "",
+        note: day.note || "",
+        sort_order: dayIndex,
+      });
+
+      (day.entries || []).forEach((entry, entryIndex) => {
+        const entryId = normalizeText(entry.id) || createStableId("entry", `${dayId}|${entryIndex}`);
+        const roundName = getEntryRoundName(entry);
+        payload.scheduleEntries.push({
+          id: entryId,
+          event_id: eventId,
+          day_id: dayId,
+          publish_version: publishVersion,
+          time: entry.time || "",
+          project_name: entry.projectName || entry.name || "",
+          division: entry.division || entry.groupName || "",
+          gender: entry.gender || "",
+          round_id: entry.roundId || getRoundIdByName(roundName) || "",
+          round_name: roundName,
+          type: entry.type || "race",
+          participant_count: toNullableNumber(entry.participantCount),
+          group_count: toNullableNumber(entry.groupCount),
+          qualification: entry.qualification || "",
+          note: entry.note || "",
+          is_merged_race: Boolean(entry.isMergedRace),
+          race_merge_mode: getEntryRaceMergeMode(entry),
+          sort_order: entryIndex,
+        });
+
+        (entry.groups || []).forEach((group, groupIndex) => {
+          const groupId = normalizeText(group.id) || createStableId("group", `${entryId}|${groupIndex}`);
+          payload.entryGroups.push({
+            id: groupId,
+            event_id: eventId,
+            entry_id: entryId,
+            publish_version: publishVersion,
+            name: group.name || "",
+            summary: group.summary || "",
+            sort_order: groupIndex,
+          });
+
+          (group.athletes || []).forEach((athlete, athleteIndex) => {
+            const athleteRowId = createStructuredAthleteRowId(eventId, entryId, groupId, athlete, athleteIndex);
+            const bib = athlete.bibNo || athlete.bib || "";
+            const organization = athlete.organization || athlete.team || "";
+            payload.groupAthletes.push({
+              id: athleteRowId,
+              event_id: eventId,
+              entry_id: entryId,
+              group_id: groupId,
+              publish_version: publishVersion,
+              bib,
+              lane: athlete.lane || "",
+              name: athlete.name || "",
+              organization,
+              gender: athlete.genderLabel || athlete.gender || entry.gender || "",
+              birth_date: athlete.birthDate || "",
+              rank: athlete.rank || "",
+              result: athlete.result || "",
+              note: athlete.note || "",
+              source: athlete.source || entry.source || "",
+              original_competition_key: athlete.originalCompetitionKey || "",
+              original_group_name: athlete.originalGroupName || athlete.groupName || "",
+              original_project_name: athlete.originalProjectName || athlete.eventName || "",
+              merge_type: normalizeMergeType(athlete.mergeType),
+              sort_order: athleteIndex,
+            });
+            payload.results.push({
+              id: createStableId("result", athleteRowId),
+              event_id: eventId,
+              entry_id: entryId,
+              group_id: groupId,
+              athlete_id: athleteRowId,
+              publish_version: publishVersion,
+              result: athlete.result || "",
+              rank: athlete.rank || "",
+              merged_overall_rank: athlete.mergedOverallRank || "",
+              original_rank: athlete.originalRank || "",
+              qualification_type: athlete.qualificationType || getQualificationMarkFromNote(athlete.note),
+              status: getAthleteResultStatus(athlete),
+            });
+          });
+        });
+      });
+    });
+
+    if (event.registrationImport) {
+      payload.registrationImports.push({
+        id: createStableId("registration-import", `${eventId}|${publishVersion}`),
+        event_id: eventId,
+        publish_version: publishVersion,
+        imported_at: event.registrationImport.importedAt || event.registrationImport.generatedAt || "",
+        summary: event.registrationImport.summary || {},
+        raw_json_path: "",
+        raw_json: event.registrationImport,
+      });
+    }
+
+    (event.manualRegistrations || []).forEach((record, index) => {
+      payload.manualRegistrations.push({
+        id: record.id || createStableId("manual-registration", `${eventId}|${index}`),
+        event_id: eventId,
+        publish_version: publishVersion,
+        data: record,
+      });
+    });
+
+    (event.changeRecords || []).forEach((record, index) => {
+      payload.changeRecords.push({
+        id: record.id || createStableId("change-record", `${eventId}|${index}`),
+        event_id: eventId,
+        publish_version: publishVersion,
+        data: record,
+      });
+    });
+
+    (event.bookExports || []).forEach((record, index) => {
+      payload.bookExports.push({
+        id: record.id || createStableId("book-export", `${eventId}|${index}`),
+        event_id: eventId,
+        publish_version: publishVersion,
+        html_path: record.htmlPath || record.html_path || "",
+        pdf_path: record.pdfPath || record.pdf_path || "",
+        created_at: record.createdAt || record.created_at || new Date().toISOString(),
+      });
+    });
+  });
+
+  return payload;
+}
+
+function createPublishVersionId() {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
+  return `pv-${stamp}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createStructuredAthleteRowId(eventId, entryId, groupId, athlete, athleteIndex) {
+  const identity =
+    athlete.athleteId ||
+    athlete.registrationNo ||
+    athlete.certificateNumber ||
+    athlete.bibNo ||
+    athlete.bib ||
+    athlete.name ||
+    athleteIndex;
+  return createStableId("group-athlete", `${eventId}|${entryId}|${groupId}|${identity}|${athleteIndex}`);
+}
+
+function toNullableNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getQualificationMarkFromNote(note) {
+  const value = normalizeText(note);
+  return value === "Q" || value === "q" ? value : "";
+}
+
+function getAthleteResultStatus(athlete) {
+  if (athlete.result) {
+    return "finished";
+  }
+  const note = normalizeText(athlete.note);
+  if (/^(DNS|DNF|DQ|犯规|未出发)$/i.test(note)) {
+    return note;
+  }
+  return "";
+}
+
 function ensureCloudClientReady() {
   if (!cloudClient) {
     throw new Error("Supabase Publishable Key 未配置，或 SDK 尚未成功初始化。");
@@ -195,6 +496,9 @@ function updateCloudRuntimeStatus(patch = {}) {
   if (!state) {
     return;
   }
+  if (patch.dataSource) {
+    state.dataSource = patch.dataSource;
+  }
   state.cloudRuntime = {
     ...(state.cloudRuntime || {}),
     sdkLoaded: Boolean(window.supabase?.createClient),
@@ -224,7 +528,11 @@ async function hydrateCloudStateOnStartup() {
     }
 
     state.data = clone(cloudData);
-    saveLocalData(state.data);
+    if (shouldPreferCloudOnStartup()) {
+      markLocalCacheSkipped("正式域名直接使用云端数据，未缓存完整数据到 localStorage。");
+    } else {
+      saveLocalData(state.data);
+    }
     syncSelections();
     updateCloudRuntimeStatus({
       dataSource: "cloud",
@@ -3098,6 +3406,7 @@ function renderAdminExportTab() {
             <span class="badge">已自动保存到本地</span>
             <button class="ghost-button" data-admin-action="download-cloud">从云端拉取</button>
             <button class="cta-button" data-admin-action="upload-cloud">发布当前数据到云端</button>
+            <button class="ghost-button" data-admin-action="clear-local-cache">清理本地缓存</button>
           </div>
         </div>
         <details class="admin-advanced-actions">
@@ -3125,6 +3434,10 @@ function renderCloudDiagnosticsPanel() {
     ["Cloud-first", status.cloudFirst ? "是" : "否"],
     ["当前数据来源", status.dataSource || "未知"],
     ["云端拉取状态", renderCloudLoadStatusText(status.cloudLoadStatus)],
+    ["app_state 快照", renderPublishStatusText(status.appStatePublishStatus)],
+    ["本地缓存状态", renderLocalCacheStatusText(status.localCacheStatus)],
+    ["结构化发布", renderPublishStatusText(status.structuredPublishStatus)],
+    ["Active 版本", status.activePublishVersion || "-"],
     ["构建版本", status.buildVersion || APP_BUILD_VERSION],
   ];
   if (status.lastCloudSyncAt) {
@@ -3156,6 +3469,22 @@ function renderCloudDiagnosticsPanel() {
           ? `<p class="cloud-diagnostics-error">${escapeHtml(status.failureReason)}</p>`
           : ""
       }
+      ${
+        status.localCacheError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.localCacheError)}</p>`
+          : ""
+      }
+      ${
+        status.appStatePublishError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.appStatePublishError)}</p>`
+          : ""
+      }
+      ${
+        status.structuredPublishError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.structuredPublishError)}</p>`
+          : ""
+      }
+      ${renderStructuredPublishCounts(status.structuredPublishCounts)}
     </div>
   `;
 }
@@ -3171,6 +3500,38 @@ function renderCloudLoadStatusText(status) {
     not_applicable: "当前域名不自动拉取",
   };
   return labels[status] || status || "未知";
+}
+
+function renderLocalCacheStatusText(status) {
+  const labels = {
+    unknown: "未知",
+    success: "已缓存",
+    failed: "缓存失败",
+    skipped: "正式域名已跳过整包缓存",
+    cleared: "已清理",
+  };
+  return labels[status] || status || "未知";
+}
+
+function renderPublishStatusText(status) {
+  const labels = {
+    idle: "未发布",
+    publishing: "发布中",
+    success: "已发布",
+    failed: "发布失败",
+    skipped: "未执行",
+  };
+  return labels[status] || status || "未知";
+}
+
+function renderStructuredPublishCounts(counts) {
+  if (!counts) {
+    return "";
+  }
+  const text = Object.entries(counts)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
+  return `<p class="cloud-diagnostics-counts">结构化写入数量：${escapeHtml(text)}</p>`;
 }
 
 function renderAdminAdvancedTab(context) {
@@ -6735,6 +7096,9 @@ function runAdminAction(action, dataset = {}) {
     case "upload-cloud":
       uploadToCloud();
       break;
+    case "clear-local-cache":
+      clearLocalCacheFromAdmin();
+      break;
     case "reset-default-data":
       resetToDefaultData();
       break;
@@ -9645,21 +10009,65 @@ async function uploadToCloud() {
   }
 
   try {
-    await saveCloudData(state.data);
+    const appStateId = await saveCloudData(state.data);
+    let structuredResult = null;
+    let structuredError = null;
+    updateCloudRuntimeStatus({
+      appStatePublishStatus: "success",
+      appStatePublishError: "",
+      structuredPublishStatus: "publishing",
+      structuredPublishError: "",
+      structuredPublishCounts: null,
+    });
+
+    try {
+      structuredResult = await saveStructuredPublishData(state.data, { appStateId });
+    } catch (error) {
+      structuredError = error;
+    }
+
     updateCloudRuntimeStatus({
       cloudLoadStatus: "success",
       failureReason: "",
       lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      appStatePublishStatus: "success",
+      appStatePublishError: "",
+      structuredPublishStatus: structuredError ? "failed" : "success",
+      structuredPublishError: structuredError
+        ? structuredError.message || "结构化发布失败，请检查结构化表是否已创建。"
+        : "",
+      activePublishVersion: structuredResult?.publishVersion || state.cloudRuntime?.activePublishVersion || "",
+      structuredPublishCounts: structuredResult?.counts || null,
     });
-    window.alert("上传成功，云端正式数据已被当前本地数据覆盖。");
+    if (structuredError) {
+      console.warn("结构化发布失败，app_state 快照已发布。", structuredError);
+      window.alert(
+        `app_state 快照已发布；结构化发布失败：${structuredError.message || "请先在 Supabase 执行结构化表 SQL。"}`
+      );
+      return;
+    }
+    window.alert(`上传成功，app_state 快照和结构化发布表均已更新。版本：${structuredResult.publishVersion}`);
   } catch (error) {
     updateCloudRuntimeStatus({
       cloudLoadStatus: "failed",
       failureReason: error.message || "请检查 Supabase 配置或表权限。",
+      appStatePublishStatus: "failed",
+      appStatePublishError: error.message || "app_state 快照发布失败。",
+      structuredPublishStatus: "failed",
+      structuredPublishError: "",
     });
     console.error("上传云端失败：", error);
     window.alert(`上传失败：${error.message || "请检查 Supabase 配置或表权限。"}`);
   }
+}
+
+function clearLocalCacheFromAdmin() {
+  if (!ensureAdminAuthenticated()) {
+    return;
+  }
+  const ok = clearLocalDataCache();
+  renderView();
+  window.alert(ok ? "本地缓存已清理。当前页面内存数据不会被删除。" : "本地缓存清理失败，请查看诊断信息。");
 }
 
 // 手动拉取：从 Supabase 读取正式数据，并覆盖当前本地数据。

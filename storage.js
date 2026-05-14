@@ -36,7 +36,72 @@ function loadLocalData() {
 }
 
 function saveLocalData(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    updateLocalCacheRuntimeStatus({
+      localCacheStatus: "success",
+      localCacheError: "",
+      lastLocalCacheAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
+    return true;
+  } catch (error) {
+    const message = getStorageErrorMessage(error);
+    updateLocalCacheRuntimeStatus({
+      localCacheStatus: "failed",
+      localCacheError: message,
+    });
+    console.warn("写入本地缓存失败，页面将继续使用当前内存数据。", error);
+    return false;
+  }
+}
+
+function markLocalCacheSkipped(reason) {
+  updateLocalCacheRuntimeStatus({
+    localCacheStatus: "skipped",
+    localCacheError: reason || "",
+  });
+}
+
+function clearLocalDataCache() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    updateLocalCacheRuntimeStatus({
+      localCacheStatus: "cleared",
+      localCacheError: "",
+      lastLocalCacheAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
+    return true;
+  } catch (error) {
+    const message = getStorageErrorMessage(error);
+    updateLocalCacheRuntimeStatus({
+      localCacheStatus: "failed",
+      localCacheError: message,
+    });
+    console.warn("清理本地缓存失败。", error);
+    return false;
+  }
+}
+
+function updateLocalCacheRuntimeStatus(patch) {
+  if (typeof state === "undefined" || !state) {
+    return;
+  }
+  state.cloudRuntime = {
+    ...(state.cloudRuntime || {}),
+    ...patch,
+  };
+}
+
+function getStorageErrorMessage(error) {
+  const message = error?.message || "";
+  if (
+    error?.name === "QuotaExceededError" ||
+    error?.code === 22 ||
+    /quota/i.test(message)
+  ) {
+    return "本地缓存容量已满，云端数据仍会正常显示，但不会写入 localStorage。";
+  }
+  return message || "本地缓存写入失败。";
 }
 
 function exportJson() {

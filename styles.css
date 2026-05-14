@@ -1042,6 +1042,24 @@ button {
   font-weight: 800;
 }
 
+.cloud-diagnostics-warning,
+.cloud-diagnostics-counts {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-weight: 800;
+}
+
+.cloud-diagnostics-warning {
+  background: rgba(242, 165, 93, 0.12);
+  color: #945f1b;
+}
+
+.cloud-diagnostics-counts {
+  background: rgba(39, 76, 134, 0.07);
+  color: var(--text-soft);
+}
+
 .admin-tabs {
   display: flex;
   gap: 10px;
