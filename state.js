@@ -428,6 +428,18 @@ function initializeState() {
   },
   pendingRegistrationImport: null,
   dataSource: "localStorage/defaultData",
+  frontendDataSource: "default",
+  publishedEvents: null,
+  publishedEventsStatus: "idle",
+  publishedEventsError: "",
+  publishedEventsLoadedAt: "",
+  publishedEventsActiveVersion: "",
+  publishedSchedule: null,
+  publishedScheduleStatus: "idle",
+  publishedScheduleError: "",
+  publishedScheduleLoadedAt: "",
+  publishedScheduleActiveVersion: "",
+  frontendScheduleDataSource: "none",
   cloudRuntime: {
     sdkLoaded: false,
     clientReady: false,
@@ -445,6 +457,22 @@ function initializeState() {
     structuredPublishError: "",
     activePublishVersion: "",
     structuredPublishCounts: null,
+    frontendDataSource: "default",
+    publishedEventsStatus: "idle",
+    publishedEventsCount: null,
+    publishedEventsLoadedAt: "",
+    publishedEventsError: "",
+    frontendScheduleDataSource: "none",
+    publishedScheduleStatus: "idle",
+    publishedEventDaysCount: null,
+    publishedScheduleEntriesCount: null,
+    publishedScheduleLoadedAt: "",
+    publishedScheduleError: "",
+    scheduleLoadedAppState: false,
+    groupDetailDataSource: "",
+    homeLoadedAppState: false,
+    detailAppStateStatus: "idle",
+    detailAppStateError: "",
     buildVersion: "",
     lastCloudSyncAt: "",
   },
@@ -455,8 +483,18 @@ function initializeState() {
 function syncSelections() {
   const events = state.data.events;
   const firstEvent = events[0] || null;
-  const currentEvent = events.find((event) => event.id === state.selectedEventId) || firstEvent;
-  state.selectedEventId = currentEvent?.id || null;
+  const publishedScheduleEvent = getCurrentPublishedScheduleEvent();
+  const publishedHomeEvent = Array.isArray(state.publishedEvents)
+    ? state.publishedEvents.find((event) => event.id === state.selectedEventId) || null
+    : null;
+  const shouldPreserveExternalEvent =
+    state.route === "schedule" && Boolean(state.selectedEventId);
+  const currentEvent =
+    events.find((event) => event.id === state.selectedEventId) ||
+    publishedScheduleEvent ||
+    publishedHomeEvent ||
+    (shouldPreserveExternalEvent ? null : firstEvent);
+  state.selectedEventId = currentEvent?.id || (shouldPreserveExternalEvent ? state.selectedEventId : null);
   if (state.adminEventId && !events.some((event) => event.id === state.adminEventId)) {
     state.adminEventId = null;
   }
@@ -615,7 +653,19 @@ function ensureEntryWithGroups() {
 }
 
 function getCurrentEvent() {
+  const publishedScheduleEvent = getCurrentPublishedScheduleEvent();
+  if (publishedScheduleEvent) {
+    return publishedScheduleEvent;
+  }
   return state.data.events.find((event) => event.id === state.selectedEventId) || null;
+}
+
+function getCurrentPublishedScheduleEvent() {
+  const event = state.publishedSchedule?.event || null;
+  if (!event || event.id !== state.selectedEventId) {
+    return null;
+  }
+  return event;
 }
 
 function getCurrentDay() {

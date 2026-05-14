@@ -4,7 +4,7 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-structured-2";
+const APP_BUILD_VERSION = "20260514-structured-schedule-1";
 const STRUCTURED_PUBLISH_TABLES = {
   publishVersions: "publish_versions",
   events: "published_events",
@@ -41,7 +41,18 @@ async function bootstrap() {
   bindEvents();
 
   if (shouldPreferCloudOnStartup()) {
-    await hydrateCloudStateOnStartup();
+    if (state.route === "home") {
+      await hydratePublishedHomeOnStartup();
+    } else if (state.route === "schedule") {
+      await hydratePublishedScheduleOnStartup();
+    } else {
+      await hydrateCloudStateOnStartup({
+        frontendDataSource: "app_state_fallback",
+        frontendScheduleDataSource: "app_state_fallback",
+        homeLoadedAppState: true,
+        scheduleLoadedAppState: true,
+      });
+    }
   }
 }
 
@@ -90,6 +101,245 @@ async function loadCloudData() {
   }
 
   return parsedData;
+}
+
+async function loadActivePublishVersion() {
+  ensureCloudClientReady();
+
+  const { data, error } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.publishVersions)
+    .select("version, published_at, created_at")
+    .eq("status", "active")
+    .order("published_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.[0] || null;
+}
+
+async function loadPublishedEvents() {
+  const activeVersion = await loadActivePublishVersion();
+  if (!activeVersion?.version) {
+    return {
+      publishVersion: "",
+      events: [],
+    };
+  }
+
+  const { data, error } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.events)
+    .select("id, name, status, stage_label, date_range, location, summary, description, display_order")
+    .eq("publish_version", activeVersion.version)
+    .order("display_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    publishVersion: activeVersion.version,
+    events: (data || []).map(mapPublishedEventRow),
+  };
+}
+
+function mapPublishedEventRow(row) {
+  return {
+    id: row.id || "",
+    name: row.name || "",
+    status: row.status || "",
+    stageLabel: row.stage_label || "",
+    dateRange: row.date_range || "",
+    location: row.location || "",
+    summary: row.summary || "",
+    description: row.description || "",
+    displayOrder: Number.isFinite(Number(row.display_order)) ? Number(row.display_order) : 0,
+    isPublishedEvent: true,
+  };
+}
+
+async function loadPublishedEventDetail(eventId, publishVersion = "") {
+  const activeVersion = publishVersion ? { version: publishVersion } : await loadActivePublishVersion();
+  if (!activeVersion?.version || !eventId) {
+    return {
+      publishVersion: activeVersion?.version || "",
+      event: null,
+    };
+  }
+
+  const { data, error } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.events)
+    .select("id, name, status, stage_label, date_range, location, summary, description, display_order")
+    .eq("publish_version", activeVersion.version)
+    .eq("id", eventId)
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    publishVersion: activeVersion.version,
+    event: data?.[0] ? mapPublishedEventRow(data[0]) : null,
+  };
+}
+
+async function loadPublishedEventDays(eventId, publishVersion) {
+  if (!eventId || !publishVersion) {
+    return [];
+  }
+
+  const { data, error } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.eventDays)
+    .select("id, event_id, label, date, note, sort_order")
+    .eq("publish_version", publishVersion)
+    .eq("event_id", eventId)
+    .order("sort_order", { ascending: true })
+    .order("date", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map(mapPublishedDayRow);
+}
+
+async function loadPublishedScheduleEntries(eventId, publishVersion) {
+  if (!eventId || !publishVersion) {
+    return [];
+  }
+
+  const { data, error } = await cloudClient
+    .from(STRUCTURED_PUBLISH_TABLES.scheduleEntries)
+    .select("id, event_id, day_id, time, project_name, division, gender, round_id, round_name, type, participant_count, group_count, qualification, note, is_merged_race, race_merge_mode, sort_order")
+    .eq("publish_version", publishVersion)
+    .eq("event_id", eventId)
+    .order("sort_order", { ascending: true })
+    .order("time", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map(mapPublishedScheduleEntryRow);
+}
+
+async function loadPublishedSchedule(eventId) {
+  const activeVersion = await loadActivePublishVersion();
+  if (!activeVersion?.version) {
+    return {
+      publishVersion: "",
+      event: null,
+      days: [],
+      entries: [],
+    };
+  }
+
+  let targetEventId = eventId;
+  if (!targetEventId) {
+    const eventsResult = await loadPublishedEvents();
+    state.publishedEvents = eventsResult.events;
+    targetEventId = eventsResult.events[0]?.id || "";
+  }
+
+  if (!targetEventId) {
+    return {
+      publishVersion: activeVersion.version,
+      event: null,
+      days: [],
+      entries: [],
+    };
+  }
+
+  const [{ event }, days, entries] = await Promise.all([
+    loadPublishedEventDetail(targetEventId, activeVersion.version),
+    loadPublishedEventDays(targetEventId, activeVersion.version),
+    loadPublishedScheduleEntries(targetEventId, activeVersion.version),
+  ]);
+
+  if (!event) {
+    return {
+      publishVersion: activeVersion.version,
+      event: null,
+      days: [],
+      entries: [],
+    };
+  }
+
+  const entriesByDay = entries.reduce((map, entry) => {
+    const list = map.get(entry.dayId) || [];
+    list.push(entry);
+    map.set(entry.dayId, list);
+    return map;
+  }, new Map());
+
+  const eventWithSchedule = {
+    ...event,
+    days: days.map((day) => ({
+      ...day,
+      entries: entriesByDay.get(day.id) || [],
+    })),
+  };
+
+  return {
+    publishVersion: activeVersion.version,
+    event: eventWithSchedule,
+    days: eventWithSchedule.days,
+    entries,
+  };
+}
+
+function mapPublishedDayRow(row) {
+  return {
+    id: row.id || "",
+    eventId: row.event_id || "",
+    label: row.label || "",
+    date: row.date || "",
+    note: row.note || "",
+    sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+  };
+}
+
+function mapPublishedScheduleEntryRow(row) {
+  const groupCount = Number.isFinite(Number(row.group_count)) ? Number(row.group_count) : 0;
+  const participantCount = Number.isFinite(Number(row.participant_count)) ? Number(row.participant_count) : 0;
+  const scheduleStatus = groupCount > 0
+    ? "已排组"
+    : /来源|晋级/.test(row.note || "")
+      ? "待晋级"
+      : participantCount > 0
+        ? "待排组"
+        : "";
+
+  return {
+    id: row.id || "",
+    eventId: row.event_id || "",
+    dayId: row.day_id || "",
+    time: row.time || "",
+    projectName: row.project_name || "",
+    division: row.division || "",
+    groupName: row.division || "",
+    gender: row.gender || "",
+    roundId: row.round_id || "",
+    roundName: row.round_name || "",
+    round: row.round_name || "",
+    type: row.type || "race",
+    participantCount: participantCount || "",
+    groupCount: groupCount || "",
+    qualification: row.qualification || "",
+    note: row.note || "",
+    scheduleStatus,
+    isMergedRace: Boolean(row.is_merged_race),
+    raceMergeMode: row.race_merge_mode || "",
+    sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+    hasPublishedGroups: groupCount > 0,
+    groups: [],
+    isPublishedScheduleEntry: true,
+  };
 }
 
 async function saveCloudData(data) {
@@ -499,6 +749,12 @@ function updateCloudRuntimeStatus(patch = {}) {
   if (patch.dataSource) {
     state.dataSource = patch.dataSource;
   }
+  if (patch.frontendDataSource) {
+    state.frontendDataSource = patch.frontendDataSource;
+  }
+  if (patch.frontendScheduleDataSource) {
+    state.frontendScheduleDataSource = patch.frontendScheduleDataSource;
+  }
   state.cloudRuntime = {
     ...(state.cloudRuntime || {}),
     sdkLoaded: Boolean(window.supabase?.createClient),
@@ -510,7 +766,7 @@ function updateCloudRuntimeStatus(patch = {}) {
   };
 }
 
-async function hydrateCloudStateOnStartup() {
+async function hydrateCloudStateOnStartup(options = {}) {
   updateCloudRuntimeStatus({
     cloudLoadStatus: "loading",
     failureReason: getCloudClientInitializationMessage(),
@@ -539,6 +795,10 @@ async function hydrateCloudStateOnStartup() {
       cloudLoadStatus: "success",
       failureReason: "",
       lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      frontendDataSource: options.frontendDataSource || state.frontendDataSource || "app_state_fallback",
+      homeLoadedAppState: Boolean(options.homeLoadedAppState),
+      frontendScheduleDataSource: options.frontendScheduleDataSource || state.frontendScheduleDataSource,
+      scheduleLoadedAppState: Boolean(options.scheduleLoadedAppState),
     });
     renderShell();
     renderView();
@@ -550,6 +810,204 @@ async function hydrateCloudStateOnStartup() {
     });
     console.warn("启动时拉取云端正式数据失败，已保留本地数据。", error);
     renderView();
+  }
+}
+
+async function hydratePublishedHomeOnStartup() {
+  updateCloudRuntimeStatus({
+    cloudLoadStatus: "loading",
+    frontendDataSource: "loading",
+    publishedEventsStatus: "loading",
+    publishedEventsError: "",
+    homeLoadedAppState: false,
+    failureReason: getCloudClientInitializationMessage(),
+  });
+
+  try {
+    const result = await loadPublishedEvents();
+    state.publishedEvents = result.events;
+    state.frontendDataSource = "structured-events";
+    state.publishedEventsStatus = result.publishVersion ? "success" : "empty";
+    state.publishedEventsError = "";
+    state.publishedEventsActiveVersion = result.publishVersion || "";
+    state.publishedEventsLoadedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+    updateCloudRuntimeStatus({
+      dataSource: "structured-events",
+      cloudLoadStatus: "success",
+      failureReason: "",
+      frontendDataSource: "structured-events",
+      publishedEventsStatus: state.publishedEventsStatus,
+      publishedEventsCount: state.publishedEvents.length,
+      publishedEventsLoadedAt: state.publishedEventsLoadedAt,
+      publishedEventsError: "",
+      activePublishVersion: result.publishVersion || "",
+      homeLoadedAppState: false,
+      lastCloudSyncAt: state.publishedEventsLoadedAt,
+    });
+    renderShell();
+    renderView();
+    replaceHistoryState();
+  } catch (error) {
+    const message = error.message || "结构化赛事列表读取失败。";
+    state.publishedEvents = null;
+    state.frontendDataSource = "app_state_fallback";
+    state.publishedEventsStatus = "failed";
+    state.publishedEventsError = message;
+    updateCloudRuntimeStatus({
+      frontendDataSource: "app_state_fallback",
+      publishedEventsStatus: "failed",
+      publishedEventsError: message,
+      homeLoadedAppState: true,
+    });
+    console.warn("结构化赛事列表读取失败，已回退 app_state 兼容模式。", error);
+    await hydrateCloudStateOnStartup({
+      frontendDataSource: "app_state_fallback",
+      homeLoadedAppState: true,
+    });
+  }
+}
+
+async function loadAppStateForPublishedEventDetails(eventId) {
+  if (!shouldPreferCloudOnStartup()) {
+    return state.data.events.some((event) => event.id === eventId);
+  }
+
+  updateCloudRuntimeStatus({
+    cloudLoadStatus: "loading",
+    detailAppStateStatus: "loading",
+    detailAppStateError: "",
+  });
+
+  try {
+    const cloudData = await loadCloudData();
+    if (!cloudData) {
+      throw new Error("云端 app_state 暂无赛事详情数据。");
+    }
+
+    state.data = clone(cloudData);
+    markLocalCacheSkipped("正式域名按需加载赛事详情，未缓存完整数据到 localStorage。");
+    syncSelections();
+    updateCloudRuntimeStatus({
+      dataSource: "cloud",
+      cloudLoadStatus: "success",
+      detailAppStateStatus: "success",
+      detailAppStateError: "",
+      lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
+    return state.data.events.some((event) => event.id === eventId);
+  } catch (error) {
+    const message = error.message || "赛事详情加载失败。";
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "failed",
+      detailAppStateStatus: "failed",
+      detailAppStateError: message,
+      failureReason: message,
+    });
+    console.warn("按需加载赛事详情失败。", error);
+    return false;
+  }
+}
+
+async function hydratePublishedScheduleOnStartup() {
+  if (!shouldPreferCloudOnStartup()) {
+    return;
+  }
+
+  const loaded = await hydratePublishedScheduleForEvent(state.selectedEventId, { render: true });
+  if (!loaded && state.frontendScheduleDataSource !== "none") {
+    await hydrateCloudStateOnStartup({
+      frontendDataSource: state.frontendDataSource || "structured-events",
+      frontendScheduleDataSource: "app_state_fallback",
+      homeLoadedAppState: Boolean(state.cloudRuntime?.homeLoadedAppState),
+      scheduleLoadedAppState: true,
+    });
+  }
+}
+
+async function hydratePublishedScheduleForEvent(eventId, options = {}) {
+  if (!shouldPreferCloudOnStartup()) {
+    return false;
+  }
+
+  updateCloudRuntimeStatus({
+    frontendScheduleDataSource: "loading",
+    publishedScheduleStatus: "loading",
+    publishedScheduleError: "",
+    scheduleLoadedAppState: false,
+  });
+
+  try {
+    const result = await loadPublishedSchedule(eventId);
+    const loadedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+    state.publishedSchedule = result.event
+      ? {
+          publishVersion: result.publishVersion,
+          event: result.event,
+          days: result.days,
+          entries: result.entries,
+        }
+      : null;
+    state.publishedScheduleStatus = result.publishVersion
+      ? result.event
+        ? "success"
+        : "empty"
+      : "empty";
+    state.publishedScheduleError = "";
+    state.publishedScheduleLoadedAt = loadedAt;
+    state.publishedScheduleActiveVersion = result.publishVersion || "";
+    state.frontendScheduleDataSource = result.event ? "structured-schedule" : "none";
+
+    if (result.event) {
+      state.selectedEventId = result.event.id;
+      const days = result.days || [];
+      if (!days.some((day) => day.id === state.selectedDayId)) {
+        state.selectedDayId = days[0]?.id || null;
+      }
+      const currentDay = days.find((day) => day.id === state.selectedDayId) || days[0] || null;
+      const entries = currentDay?.entries || [];
+      if (!entries.some((entry) => entry.id === state.selectedEntryId)) {
+        state.selectedEntryId = entries.find((entry) => hasScheduleEntryGroups(entry))?.id || entries[0]?.id || null;
+      }
+      state.selectedGroupId = null;
+    }
+
+    updateCloudRuntimeStatus({
+      dataSource: state.dataSource || getInitialDataSourceLabel(),
+      cloudLoadStatus: "success",
+      failureReason: "",
+      frontendScheduleDataSource: state.frontendScheduleDataSource,
+      publishedScheduleStatus: state.publishedScheduleStatus,
+      publishedEventDaysCount: result.days.length,
+      publishedScheduleEntriesCount: result.entries.length,
+      publishedScheduleLoadedAt: loadedAt,
+      publishedScheduleError: "",
+      activePublishVersion: result.publishVersion || state.cloudRuntime?.activePublishVersion || "",
+      scheduleLoadedAppState: false,
+      groupDetailDataSource: "app_state_compat",
+      lastCloudSyncAt: loadedAt,
+    });
+
+    if (options.render) {
+      renderShell();
+      renderView();
+      replaceHistoryState();
+    }
+
+    return Boolean(result.event);
+  } catch (error) {
+    const message = error.message || "结构化赛程读取失败。";
+    state.publishedSchedule = null;
+    state.publishedScheduleStatus = "failed";
+    state.publishedScheduleError = message;
+    state.frontendScheduleDataSource = "app_state_fallback";
+    updateCloudRuntimeStatus({
+      frontendScheduleDataSource: "app_state_fallback",
+      publishedScheduleStatus: "failed",
+      publishedScheduleError: message,
+      scheduleLoadedAppState: true,
+    });
+    console.warn("结构化赛程读取失败，准备回退 app_state 兼容模式。", error);
+    return false;
   }
 }
 
@@ -631,7 +1089,8 @@ function renderView() {
   syncSelections();
   let viewHtml = "";
 
-  if (!state.data.events.length && state.route !== "admin") {
+  const hasStructuredScheduleEvent = Boolean(state.publishedSchedule?.event && state.route === "schedule");
+  if (!state.data.events.length && state.route !== "admin" && !hasStructuredScheduleEvent) {
     viewHtml = `
       <section class="empty-card">
         <h2>还没有赛事数据</h2>
@@ -732,17 +1191,45 @@ function renderHomeView() {
       </div>
     </section>
 
+    ${renderFrontendHomeDataNotice()}
+
     <section class="event-list" id="event-list">
-      ${homeEvents.map(renderEventCard).join("") || renderHintCard("当前没有正在展示的赛事。")}
+      ${homeEvents.map(renderEventCard).join("") || renderHintCard(getHomeEmptyMessage())}
     </section>
   `;
 }
 
 function getHomeEvents() {
+  if (Array.isArray(state.publishedEvents)) {
+    return state.publishedEvents
+      .filter(shouldShowEventOnHome)
+      .slice()
+      .sort((left, right) => (left.displayOrder || 0) - (right.displayOrder || 0));
+  }
+
   return state.data.events
     .filter(shouldShowEventOnHome)
     .slice()
     .reverse();
+}
+
+function getHomeEmptyMessage() {
+  if (state.frontendDataSource === "structured-events" && state.publishedEventsStatus === "empty") {
+    return "当前没有已发布赛事，请先在后台发布数据。";
+  }
+  return "当前没有正在展示的赛事。";
+}
+
+function renderFrontendHomeDataNotice() {
+  if (state.frontendDataSource !== "app_state_fallback" || !state.publishedEventsError) {
+    return "";
+  }
+
+  return `
+    <div class="cloud-diagnostics-warning">
+      结构化赛事列表读取失败，已回退 app_state 兼容模式：${escapeHtml(state.publishedEventsError)}
+    </div>
+  `;
 }
 
 function renderStatCard(value, label, isClickable = false) {
@@ -755,6 +1242,7 @@ function renderStatCard(value, label, isClickable = false) {
 }
 
 function renderEventCard(event) {
+  const canRemoveEvent = state.isAdminAuthenticated && state.data.events.some((item) => item.id === event.id);
   return `
     <article class="event-card panel" data-open-event="${event.id}" data-route-target="schedule">
       <div class="event-meta">
@@ -766,10 +1254,10 @@ function renderEventCard(event) {
           <span class="badge event-card-location">${escapeHtml(event.location || "待定场馆")}</span>
         </div>
       </div>
-      <div class="toolbar-actions event-card-actions ${state.isAdminAuthenticated ? "has-admin-action" : "no-admin-action"}">
+      <div class="toolbar-actions event-card-actions ${canRemoveEvent ? "has-admin-action" : "no-admin-action"}">
         <button class="cta-button event-card-desktop-cta" data-open-event="${event.id}" data-route-target="schedule">查看详情</button>
         ${
-          state.isAdminAuthenticated
+          canRemoveEvent
             ? `<button class="danger-button" data-remove-event="${event.id}">删除赛事</button>`
             : ""
         }
@@ -781,6 +1269,22 @@ function renderEventCard(event) {
 function renderScheduleView() {
   const event = getCurrentEvent();
   const day = getCurrentDay();
+  if (shouldPreferCloudOnStartup() && state.frontendScheduleDataSource === "loading") {
+    return renderMissingState("正在读取已发布赛程，请稍候。");
+  }
+
+  if (shouldPreferCloudOnStartup() && state.frontendScheduleDataSource === "none" && state.publishedScheduleStatus === "empty") {
+    return renderMissingState(state.publishedScheduleActiveVersion ? "没有找到该赛事的已发布日程。" : "当前赛事尚未发布。");
+  }
+
+  if (
+    shouldPreferCloudOnStartup() &&
+    state.publishedScheduleStatus === "failed" &&
+    state.frontendScheduleDataSource !== "app_state_fallback"
+  ) {
+    return renderMissingState("结构化赛程读取失败，请稍后重试或在后台重新发布。");
+  }
+
   if (!event) {
     return renderMissingState("当前没有可查看的赛事。");
   }
@@ -811,6 +1315,7 @@ function renderScheduleView() {
     </section>
 
     ${renderScheduleDayNavigator(event, day)}
+    ${renderScheduleDataNotice()}
 
     <section class="table-card schedule-table-card">
       <div class="table-scroll-x">
@@ -832,7 +1337,7 @@ function renderScheduleView() {
           <tbody>
             ${(day?.entries || []).map(renderScheduleRow).join("") || `
               <tr>
-                <td colspan="10">当前比赛日还没有录入赛程。</td>
+                <td colspan="10">当前比赛日还没有编排赛程。</td>
               </tr>
             `}
           </tbody>
@@ -841,6 +1346,22 @@ function renderScheduleView() {
       <p class="table-note">说明：后台新增或修改条目后，这里的数据会同步更新。</p>
     </section>
   `;
+}
+
+function renderScheduleDataNotice() {
+  if (state.frontendScheduleDataSource === "structured-schedule") {
+    return "";
+  }
+
+  if (state.frontendScheduleDataSource === "app_state_fallback" && state.publishedScheduleError) {
+    return `
+      <div class="cloud-diagnostics-warning">
+        结构化赛程读取失败，已回退 app_state 兼容模式：${escapeHtml(state.publishedScheduleError)}
+      </div>
+    `;
+  }
+
+  return "";
 }
 
 function renderScheduleDayNavigator(event, day) {
@@ -881,14 +1402,14 @@ function renderScheduleDayNavigator(event, day) {
 }
 
 function renderScheduleRow(entry) {
-  if (entry.type === "break") {
+  if (isNonRaceScheduleEntry(entry)) {
     return `
       <tr class="timeline-break schedule-row-break">
         <td data-label="比赛时间">${escapeHtml(entry.time || "-")}</td>
-        <td data-label="项目名称">${escapeHtml(entry.projectName || "休整")}</td>
+        <td data-label="项目名称">${escapeHtml(entry.projectName || getNonRaceScheduleEntryLabel(entry))}</td>
         <td data-label="组别">${escapeHtml(entry.division || "")}</td>
         <td data-label="性别">${escapeHtml(entry.gender || "")}</td>
-        <td data-label="赛别">${escapeHtml(entry.round || "维护")}</td>
+        <td data-label="赛别">${escapeHtml(entry.round || getNonRaceScheduleEntryLabel(entry))}</td>
         <td data-label="状态"><span class="schedule-status-pill muted">休整</span></td>
         <td data-label="人数"></td>
         <td data-label="组数"></td>
@@ -898,7 +1419,7 @@ function renderScheduleRow(entry) {
     `;
   }
 
-  const hasGroups = Boolean(entry.groups?.length);
+  const hasGroups = hasScheduleEntryGroups(entry);
   const rowAction =
     hasGroups
       ? ` class="schedule-row-grouped row-clickable" data-open-entry-row="${entry.id}"`
@@ -921,6 +1442,24 @@ function renderScheduleRow(entry) {
       <td data-label="备注">${escapeHtml(sanitizeRegistrationScheduleNote(entry.note || ""))}</td>
     </tr>
   `;
+}
+
+function hasScheduleEntryGroups(entry) {
+  return Boolean(entry?.groups?.length) || Boolean(entry?.hasPublishedGroups) || Number(entry?.groupCount || 0) > 0;
+}
+
+function isNonRaceScheduleEntry(entry) {
+  return ["break", "ice_resurface", "checkin", "award", "note"].includes(entry?.type);
+}
+
+function getNonRaceScheduleEntryLabel(entry) {
+  return {
+    break: "休整",
+    ice_resurface: "浇冰",
+    checkin: "检录",
+    award: "颁奖",
+    note: "说明",
+  }[entry?.type] || "休整";
 }
 
 function renderGroupsView() {
@@ -3438,6 +3977,16 @@ function renderCloudDiagnosticsPanel() {
     ["本地缓存状态", renderLocalCacheStatusText(status.localCacheStatus)],
     ["结构化发布", renderPublishStatusText(status.structuredPublishStatus)],
     ["Active 版本", status.activePublishVersion || "-"],
+    ["前台首页数据源", status.frontendDataSource || state.frontendDataSource || "default"],
+    ["published_events 数量", formatNullableCount(status.publishedEventsCount)],
+    ["published_events 加载时间", status.publishedEventsLoadedAt || "-"],
+    ["首页加载 app_state 整包", status.homeLoadedAppState ? "是" : "否"],
+    ["赛程页数据源", status.frontendScheduleDataSource || state.frontendScheduleDataSource || "none"],
+    ["published_event_days 数量", formatNullableCount(status.publishedEventDaysCount)],
+    ["published_schedule_entries 数量", formatNullableCount(status.publishedScheduleEntriesCount)],
+    ["赛程加载时间", status.publishedScheduleLoadedAt || "-"],
+    ["赛程页加载 app_state 整包", status.scheduleLoadedAppState ? "是" : "否"],
+    ["分组详情数据源", status.groupDetailDataSource || "structured-groups 未启用"],
     ["构建版本", status.buildVersion || APP_BUILD_VERSION],
   ];
   if (status.lastCloudSyncAt) {
@@ -3484,9 +4033,23 @@ function renderCloudDiagnosticsPanel() {
           ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.structuredPublishError)}</p>`
           : ""
       }
+      ${
+        status.publishedEventsError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedEventsError)}</p>`
+          : ""
+      }
+      ${
+        status.publishedScheduleError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedScheduleError)}</p>`
+          : ""
+      }
       ${renderStructuredPublishCounts(status.structuredPublishCounts)}
     </div>
   `;
+}
+
+function formatNullableCount(value) {
+  return value == null ? "-" : String(value);
 }
 
 function renderCloudLoadStatusText(status) {
@@ -6404,7 +6967,7 @@ function handleKeydown(event) {
   loginAdmin();
 }
 
-function handleClick(event) {
+async function handleClick(event) {
   const dialogAction = event.target.closest("[data-app-dialog-action]");
   if (dialogAction) {
     runAppDialogAction(dialogAction.dataset.appDialogAction);
@@ -6442,9 +7005,7 @@ function handleClick(event) {
 
   const openEntryRow = event.target.closest("[data-open-entry-row]");
   if (openEntryRow) {
-    state.selectedEntryId = openEntryRow.dataset.openEntryRow;
-    ensureEntryWithGroups();
-    setRoute("groups");
+    await openEntryFromSchedule(openEntryRow.dataset.openEntryRow);
     return;
   }
 
@@ -6452,6 +7013,10 @@ function handleClick(event) {
   if (routeTarget) {
     if (routeTarget.dataset.route === "admin") {
       enterAdminFromRoute();
+      return;
+    }
+    if (routeTarget.dataset.route === "schedule" && shouldPreferCloudOnStartup()) {
+      await openScheduleRoute();
       return;
     }
     setRoute(routeTarget.dataset.route);
@@ -6477,10 +7042,7 @@ function handleClick(event) {
 
   const openEventButton = event.target.closest("[data-open-event]");
   if (openEventButton) {
-    state.selectedEventId = openEventButton.dataset.openEvent;
-    syncSelections();
-    const nextRoute = openEventButton.dataset.routeTarget || "schedule";
-    setRoute(nextRoute);
+    await openEventFromHome(openEventButton.dataset.openEvent, openEventButton.dataset.routeTarget || "schedule");
     return;
   }
 
@@ -6495,9 +7057,7 @@ function handleClick(event) {
 
   const openEntryButton = event.target.closest("[data-open-entry]");
   if (openEntryButton) {
-    state.selectedEntryId = openEntryButton.dataset.openEntry;
-    ensureEntryWithGroups();
-    setRoute("groups");
+    await openEntryFromSchedule(openEntryButton.dataset.openEntry);
     return;
   }
 
@@ -6553,6 +7113,128 @@ function handleClick(event) {
   ) {
     closePreRaceTargetGroupCombobox({ render: false });
   }
+}
+
+async function openEventFromHome(eventId, nextRoute = "schedule") {
+  if (nextRoute === "schedule" && shouldPreferCloudOnStartup()) {
+    state.selectedEventId = eventId;
+    const loaded = await hydratePublishedScheduleForEvent(eventId, { render: false });
+    if (!loaded && state.frontendScheduleDataSource === "none") {
+      setRoute("schedule");
+      return;
+    }
+    if (!loaded && state.frontendScheduleDataSource === "app_state_fallback") {
+      await hydrateCloudStateOnStartup({
+        frontendDataSource: state.frontendDataSource || "structured-events",
+        frontendScheduleDataSource: "app_state_fallback",
+        homeLoadedAppState: Boolean(state.cloudRuntime?.homeLoadedAppState),
+        scheduleLoadedAppState: true,
+      });
+      setRoute("schedule");
+      return;
+    }
+    if (!loaded && state.frontendScheduleDataSource !== "app_state_fallback") {
+      showAppDialog({
+        eyebrow: "赛事日程",
+        title: "赛事日程暂未加载",
+        message: "没有找到该赛事的已发布日程，请确认后台已经发布结构化数据。",
+        confirmText: "知道了",
+        cancelText: "",
+      });
+      return;
+    }
+    setRoute("schedule");
+    return;
+  }
+
+  const isPublishedHomeEvent = Array.isArray(state.publishedEvents)
+    ? state.publishedEvents.some((event) => event.id === eventId)
+    : false;
+  const hasLocalDetails = state.data.events.some((event) => event.id === eventId);
+
+  if (isPublishedHomeEvent && shouldPreferCloudOnStartup() && !hasLocalDetails && state.dataSource !== "cloud") {
+    const hasDetails = await loadAppStateForPublishedEventDetails(eventId);
+    if (!hasDetails) {
+      showAppDialog({
+        eyebrow: "赛事详情",
+        title: "赛事详情暂未加载",
+        message: "首页已读取结构化赛事列表；该赛事的赛程详情结构化读取将在下一阶段支持。请确认 app_state 快照已发布。",
+        confirmText: "知道了",
+        cancelText: "",
+      });
+      return;
+    }
+  }
+
+  if (!state.data.events.some((event) => event.id === eventId)) {
+    showAppDialog({
+      eyebrow: "赛事详情",
+      title: "没有找到赛事详情",
+      message: "当前首页列表来自结构化发布表，但本地兼容数据中没有这个赛事的完整赛程详情。",
+      confirmText: "知道了",
+      cancelText: "",
+    });
+    return;
+  }
+
+  state.selectedEventId = eventId;
+  syncSelections();
+  setRoute(nextRoute);
+}
+
+async function openScheduleRoute() {
+  const publishedEventIds = Array.isArray(state.publishedEvents)
+    ? state.publishedEvents.map((event) => event.id)
+    : [];
+  const selectedPublishedEventId = publishedEventIds.includes(state.selectedEventId)
+    ? state.selectedEventId
+    : "";
+  const preferredEventId =
+    selectedPublishedEventId ||
+    state.publishedSchedule?.event?.id ||
+    (Array.isArray(state.publishedEvents) ? state.publishedEvents[0]?.id : "") ||
+    state.selectedEventId ||
+    "";
+
+  if (preferredEventId) {
+    state.selectedEventId = preferredEventId;
+  }
+
+  const loaded = await hydratePublishedScheduleForEvent(preferredEventId, { render: false });
+  if (!loaded && state.frontendScheduleDataSource !== "none") {
+    await hydrateCloudStateOnStartup({
+      frontendDataSource: state.frontendDataSource || "structured-events",
+      frontendScheduleDataSource: "app_state_fallback",
+      homeLoadedAppState: Boolean(state.cloudRuntime?.homeLoadedAppState),
+      scheduleLoadedAppState: true,
+    });
+  }
+  setRoute("schedule");
+}
+
+async function openEntryFromSchedule(entryId) {
+  state.selectedEntryId = entryId;
+
+  if (state.frontendScheduleDataSource === "structured-schedule" && shouldPreferCloudOnStartup() && state.dataSource !== "cloud") {
+    const hasDetails = await loadAppStateForPublishedEventDetails(state.selectedEventId);
+    updateCloudRuntimeStatus({
+      groupDetailDataSource: hasDetails ? "app_state_compat" : "structured-groups 未启用",
+      scheduleLoadedAppState: hasDetails,
+    });
+    if (!hasDetails) {
+      showAppDialog({
+        eyebrow: "分组详情",
+        title: "分组详情暂未加载",
+        message: "赛程页已读取结构化发布表；分组详情结构化读取将在下一阶段支持。请确认 app_state 快照已发布。",
+        confirmText: "知道了",
+        cancelText: "",
+      });
+      return;
+    }
+  }
+
+  ensureEntryWithGroups();
+  setRoute("groups");
 }
 
 function handleInput(event) {
