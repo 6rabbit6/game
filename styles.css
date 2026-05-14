@@ -1670,7 +1670,8 @@ button {
   gap: 14px;
   align-items: center;
   justify-content: flex-start;
-  margin: 0 0 18px;
+  max-width: 1240px;
+  margin: 0 auto 18px;
   padding: 12px 14px;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--primary-strong), var(--primary));
@@ -1695,7 +1696,8 @@ button {
 .group-detail-hero,
 .group-detail-switcher,
 .group-detail-athletes {
-  margin-bottom: 18px;
+  max-width: 1240px;
+  margin: 0 auto 18px;
   border: 1px solid rgba(255, 255, 255, 0.76);
   border-radius: var(--radius-xl);
   background: rgba(255, 255, 255, 0.92);
@@ -1704,7 +1706,7 @@ button {
 }
 
 .group-detail-hero {
-  padding: 28px 30px;
+  padding: 28px 34px;
   text-align: center;
 }
 
@@ -1746,20 +1748,27 @@ button {
   padding: 22px 24px;
 }
 
-.group-detail-switch-row {
-  display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 54px;
+.group-detail-switch-main {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 18px;
 }
 
+.group-detail-switch-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
 .group-detail-arrow {
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   background: rgba(39, 76, 134, 0.08);
   color: var(--primary);
-  font-size: 1.35rem;
+  font-size: 1.28rem;
   font-weight: 900;
 }
 
@@ -1774,18 +1783,12 @@ button {
   opacity: 0.7;
 }
 
-.group-detail-switch-center {
-  display: grid;
-  justify-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
 .group-detail-count {
   color: var(--primary);
-  font-size: 1.45rem;
+  font-size: 1.35rem;
   font-weight: 950;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .group-detail-count strong {
@@ -1793,9 +1796,19 @@ button {
   font-size: 1.25em;
 }
 
+.group-detail-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .group-detail-select {
   width: auto;
-  min-width: 132px;
+  min-width: 134px;
   min-height: 42px;
   padding: 0 42px 0 18px;
   border-radius: 999px;
@@ -1812,9 +1825,66 @@ button {
 }
 
 .group-detail-athletes {
-  display: grid;
-  gap: 12px;
   padding: 18px;
+  overflow: hidden;
+}
+
+.group-desktop-athletes {
+  display: block;
+}
+
+.group-mobile-athletes {
+  display: none;
+}
+
+.group-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.group-detail-table th,
+.group-detail-table td {
+  padding: 16px 14px;
+  border-bottom: 1px solid rgba(30, 61, 102, 0.1);
+  color: var(--text);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.group-detail-table th {
+  color: var(--primary);
+  font-size: 0.95rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.group-detail-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.group-detail-table td:nth-child(1),
+.group-detail-table td:nth-child(2),
+.group-detail-table td:nth-child(3),
+.group-detail-table td:nth-last-child(3),
+.group-detail-table td:nth-last-child(1) {
+  white-space: nowrap;
+}
+
+.group-table-bib {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(39, 76, 134, 0.08);
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.group-detail-muted {
+  color: var(--text-soft);
 }
 
 .group-athlete-card {
@@ -1920,6 +1990,53 @@ button {
   color: var(--text-soft);
   text-align: center;
   font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .group-detail-nav,
+  .group-detail-hero,
+  .group-detail-switcher,
+  .group-detail-athletes {
+    max-width: 720px;
+  }
+
+  .group-detail-switch-main {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+  }
+
+  .group-detail-switch-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
+    gap: 12px;
+  }
+
+  .group-detail-count {
+    align-self: center;
+    justify-self: center;
+    text-align: center;
+  }
+
+  .group-detail-select-wrap {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+  }
+
+  .group-detail-select-wrap span {
+    display: none;
+  }
+
+  .group-desktop-athletes {
+    display: none;
+  }
+
+  .group-mobile-athletes {
+    display: grid;
+    gap: 10px;
+  }
 }
 
 .athlete-mobile-card {
@@ -4021,18 +4138,14 @@ button {
     padding: 16px 14px;
   }
 
-  .group-detail-switch-row {
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
-    gap: 10px;
-  }
-
   .group-detail-arrow {
     width: 42px;
     height: 42px;
     font-size: 1.12rem;
   }
 
-  .group-detail-switch-center {
+  .group-detail-switch-controls {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
     gap: 10px;
   }
 

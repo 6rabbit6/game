@@ -2217,16 +2217,13 @@ function renderGroupsStatusCard(title, message) {
 }
 
 function renderGroupsDetailMarkup(event, day, entry) {
+  const groups = entry.groups || [];
   const currentGroup =
-    entry.groups.find((group) => group.id === state.selectedGroupId) || entry.groups[0] || null;
+    groups.find((group) => group.id === state.selectedGroupId) || groups[0] || null;
   const currentGroupIndex = Math.max(
     0,
-    entry.groups.findIndex((group) => group.id === currentGroup?.id)
+    groups.findIndex((group) => group.id === currentGroup?.id)
   );
-  const previousGroup = entry.groups[currentGroupIndex - 1] || null;
-  const nextGroup = entry.groups[currentGroupIndex + 1] || null;
-  const rawGroupSummary = normalizeText(currentGroup?.summary);
-  const groupSummary = /补充分组说明/.test(rawGroupSummary) ? "" : rawGroupSummary;
 
   return `
     <section class="group-detail-nav" aria-label="分组详情导航">
@@ -2244,74 +2241,155 @@ function renderGroupsDetailMarkup(event, day, entry) {
       </div>
     </section>
 
-    <section class="group-detail-switcher">
-      <div class="group-detail-switch-row">
-        <button
-          class="group-detail-arrow"
-          ${previousGroup ? `data-select-group="${previousGroup.id}"` : "disabled"}
-          aria-label="上一组"
-        >
-          ←
-        </button>
-        <div class="group-detail-switch-center">
-          <div class="group-detail-count">
-            第 <strong>${currentGroupIndex + 1}</strong> 组 / 共 <strong>${entry.groups.length}</strong> 组
-          </div>
-          <select class="group-detail-select" data-group-select-mobile aria-label="选择分组">
-            ${entry.groups
-              .map(
-                (group) => `
-                  <option value="${escapeAttribute(group.id)}" ${group.id === currentGroup?.id ? "selected" : ""}>
-                    ${escapeHtml(group.name)}
-                  </option>
-                `
-              )
-              .join("")}
-          </select>
-        </div>
-        <button
-          class="group-detail-arrow"
-          ${nextGroup ? `data-select-group="${nextGroup.id}"` : "disabled"}
-          aria-label="下一组"
-        >
-          →
-        </button>
-      </div>
-      ${groupSummary ? `<p class="group-detail-summary">${escapeHtml(groupSummary)}</p>` : ""}
-    </section>
+    ${renderGroupSwitcher(groups, currentGroup, currentGroupIndex)}
 
     <section class="group-detail-athletes">
       ${renderEntryRankNotice(entry)}
-      ${
-        currentGroup?.athletes?.length
-          ? currentGroup.athletes
-              .map(
-                (athlete) => `
-                  <article class="group-athlete-card">
-                    <div class="group-athlete-rank">
-                      <span>名次</span>
-                      <strong>${escapeHtml(getAthleteDisplayRank(athlete, entry) || "-")}</strong>
-                    </div>
-                    <div class="group-athlete-main">
-                      <div class="group-athlete-head">
-                        <span class="group-athlete-bib">${escapeHtml(athlete.bib || athlete.bibNo || "-")}</span>
-                        <h3>${escapeHtml(athlete.name || "-")}</h3>
-                      </div>
-                      <p class="group-athlete-team">${escapeHtml(athlete.team || athlete.organization || "-")}</p>
-                      <div class="group-athlete-meta">
-                        ${athlete.lane ? `<span>道次 ${escapeHtml(athlete.lane)}</span>` : ""}
-                        ${athlete.result ? `<span>成绩 ${escapeHtml(athlete.result)}</span>` : ""}
-                        ${athlete.note ? `<span class="group-athlete-note">备注 ${escapeHtml(athlete.note)}</span>` : ""}
-                        ${renderMergeInfoCell(athlete)}
-                      </div>
-                    </div>
-                  </article>
-                `
-              )
-              .join("")
-          : `<div class="group-athlete-empty">暂无运动员</div>`
-      }
+      ${renderGroupDesktopAthletes(currentGroup, entry)}
+      ${renderGroupMobileAthletes(currentGroup, entry)}
     </section>
+  `;
+}
+
+function renderGroupSwitcher(groups, currentGroup, currentGroupIndex) {
+  const previousGroup = groups[currentGroupIndex - 1] || null;
+  const nextGroup = groups[currentGroupIndex + 1] || null;
+  const rawGroupSummary = normalizeText(currentGroup?.summary);
+  const groupSummary = /补充分组说明/.test(rawGroupSummary) ? "" : rawGroupSummary;
+  const groupOptions = groups
+    .map(
+      (group) => `
+        <option value="${escapeAttribute(group.id)}" ${group.id === currentGroup?.id ? "selected" : ""}>
+          ${escapeHtml(group.name)}
+        </option>
+      `
+    )
+    .join("");
+
+  return `
+    <section class="group-detail-switcher">
+      <div class="group-detail-switch-main">
+        <div class="group-detail-switch-controls">
+          <button
+            class="group-detail-arrow"
+            ${previousGroup ? `data-select-group="${previousGroup.id}"` : "disabled"}
+            aria-label="上一组"
+          >
+            ←
+          </button>
+          <div class="group-detail-count">
+            第 <strong>${currentGroupIndex + 1}</strong> 组 / 共 <strong>${groups.length}</strong> 组
+          </div>
+          <button
+            class="group-detail-arrow"
+            ${nextGroup ? `data-select-group="${nextGroup.id}"` : "disabled"}
+            aria-label="下一组"
+          >
+            →
+          </button>
+        </div>
+        <label class="group-detail-select-wrap">
+          <span>选择分组</span>
+          <select class="group-detail-select" data-group-select-mobile aria-label="选择分组">
+            ${groupOptions}
+          </select>
+        </label>
+      </div>
+      ${groupSummary ? `<p class="group-detail-summary">${escapeHtml(groupSummary)}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderGroupDesktopAthletes(currentGroup, entry) {
+  const athletes = currentGroup?.athletes || [];
+  if (!athletes.length) {
+    return `<div class="group-desktop-athletes"><div class="group-athlete-empty">暂无运动员</div></div>`;
+  }
+
+  const isSeparateMergedRanking =
+    entry?.isMergedRace && getEntryRaceMergeMode(entry) === "race_together_rank_separately";
+  const headerCells = isSeparateMergedRanking
+    ? ["总名次", "小项名次", "道次", "号码", "姓名", "单位", "成绩", "来源", "备注"]
+    : ["名次", "道次", "号码", "姓名", "单位", "成绩", "备注"];
+
+  return `
+    <div class="group-desktop-athletes">
+      <table class="group-detail-table">
+        <thead>
+          <tr>${headerCells.map((label) => `<th>${escapeHtml(label)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${athletes
+            .map((athlete) => {
+              const sourceCell = renderMergeInfoCell(athlete) || `<span class="group-detail-muted">-</span>`;
+              if (isSeparateMergedRanking) {
+                return `
+                  <tr>
+                    <td>${escapeHtml(getAthleteRankForEntry(entry, athlete, "mergedOverallRank") || "-")}</td>
+                    <td>${escapeHtml(getAthleteRankForEntry(entry, athlete, "originalRank") || "-")}</td>
+                    <td>${escapeHtml(athlete.lane || "-")}</td>
+                    <td><span class="group-table-bib">${escapeHtml(athlete.bib || athlete.bibNo || "-")}</span></td>
+                    <td>${escapeHtml(athlete.name || "-")}</td>
+                    <td>${escapeHtml(athlete.team || athlete.organization || "-")}</td>
+                    <td>${escapeHtml(athlete.result || "-")}</td>
+                    <td>${sourceCell}</td>
+                    <td>${escapeHtml(athlete.note || "-")}</td>
+                  </tr>
+                `;
+              }
+              return `
+                <tr>
+                  <td>${escapeHtml(getAthleteDisplayRank(athlete, entry) || "-")}</td>
+                  <td>${escapeHtml(athlete.lane || "-")}</td>
+                  <td><span class="group-table-bib">${escapeHtml(athlete.bib || athlete.bibNo || "-")}</span></td>
+                  <td>${escapeHtml(athlete.name || "-")}</td>
+                  <td>${escapeHtml(athlete.team || athlete.organization || "-")}</td>
+                  <td>${escapeHtml(athlete.result || "-")}</td>
+                  <td>${escapeHtml(athlete.note || "-")}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderGroupMobileAthletes(currentGroup, entry) {
+  const athletes = currentGroup?.athletes || [];
+  if (!athletes.length) {
+    return `<div class="group-mobile-athletes"><div class="group-athlete-empty">暂无运动员</div></div>`;
+  }
+
+  return `
+    <div class="group-mobile-athletes">
+      ${athletes
+        .map(
+          (athlete) => `
+            <article class="group-athlete-card">
+              <div class="group-athlete-rank">
+                <span>名次</span>
+                <strong>${escapeHtml(getAthleteDisplayRank(athlete, entry) || "-")}</strong>
+              </div>
+              <div class="group-athlete-main">
+                <div class="group-athlete-head">
+                  <span class="group-athlete-bib">${escapeHtml(athlete.bib || athlete.bibNo || "-")}</span>
+                  <h3>${escapeHtml(athlete.name || "-")}</h3>
+                </div>
+                <p class="group-athlete-team">${escapeHtml(athlete.team || athlete.organization || "-")}</p>
+                <div class="group-athlete-meta">
+                  ${athlete.lane ? `<span>道次 ${escapeHtml(athlete.lane)}</span>` : ""}
+                  ${athlete.result ? `<span>成绩 ${escapeHtml(athlete.result)}</span>` : ""}
+                  ${athlete.note ? `<span class="group-athlete-note">备注 ${escapeHtml(athlete.note)}</span>` : ""}
+                  ${renderMergeInfoCell(athlete)}
+                </div>
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
   `;
 }
 
