@@ -26,7 +26,14 @@
       <footer class="page-footer" id="pageFooter"></footer>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./vendor/supabase-js.min.js?v=20260514"></script>
+    <script>
+      if (!window.supabase?.createClient) {
+        document.write(
+          '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4/dist/umd/supabase.min.js"><\\/script>'
+        );
+      }
+    </script>
     <script src="./utils.js" defer></script>
     <script src="./results.js" defer></script>
     <script src="./storage.js" defer></script>

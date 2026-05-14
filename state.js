@@ -427,6 +427,17 @@ function initializeState() {
     values: {},
   },
   pendingRegistrationImport: null,
+  cloudRuntime: {
+    sdkLoaded: false,
+    clientReady: false,
+    host: "",
+    cloudFirst: false,
+    dataSource: "localStorage/defaultData",
+    cloudLoadStatus: "idle",
+    failureReason: "",
+    buildVersion: "",
+    lastCloudSyncAt: "",
+  },
 };
   return state;
 }

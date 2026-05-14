@@ -4,6 +4,7 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
+const APP_BUILD_VERSION = "20260514-local-supabase-sdk";
 const cloudClient = createCloudClient();
 const appDialogActions = new Map();
 let appNoticeTimer = null;
@@ -13,6 +14,11 @@ initializeState();
 bootstrap();
 
 async function bootstrap() {
+  updateCloudRuntimeStatus({
+    cloudLoadStatus: shouldPreferCloudOnStartup() ? "waiting" : "not_applicable",
+    dataSource: getInitialDataSourceLabel(),
+    failureReason: getCloudClientInitializationMessage(),
+  });
   await initializeAdminAuth();
   restoreInitialHistoryState();
   syncSelections();
@@ -164,21 +170,78 @@ function shouldPreferCloudOnStartup() {
   return CLOUD_FIRST_HOSTS.some((host) => window.location.hostname === host);
 }
 
+function getCloudClientInitializationMessage() {
+  if (!window.supabase?.createClient) {
+    return "Supabase SDK 未加载，无法读取云端数据。当前显示的可能是本地缓存或默认数据。";
+  }
+  if (!SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLISHABLE_KEY === "REPLACE_WITH_PUBLISHABLE_KEY") {
+    return "Supabase Publishable Key 未配置，无法读取云端数据。";
+  }
+  if (!cloudClient) {
+    return "Supabase 客户端初始化失败。";
+  }
+  return "";
+}
+
+function getInitialDataSourceLabel() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) ? "localStorage" : "defaultData";
+  } catch (error) {
+    return "defaultData";
+  }
+}
+
+function updateCloudRuntimeStatus(patch = {}) {
+  if (!state) {
+    return;
+  }
+  state.cloudRuntime = {
+    ...(state.cloudRuntime || {}),
+    sdkLoaded: Boolean(window.supabase?.createClient),
+    clientReady: Boolean(cloudClient),
+    host: window.location.hostname,
+    cloudFirst: shouldPreferCloudOnStartup(),
+    buildVersion: APP_BUILD_VERSION,
+    ...patch,
+  };
+}
+
 async function hydrateCloudStateOnStartup() {
+  updateCloudRuntimeStatus({
+    cloudLoadStatus: "loading",
+    failureReason: getCloudClientInitializationMessage(),
+  });
+
   try {
     const cloudData = await loadCloudData();
     if (!cloudData) {
+      updateCloudRuntimeStatus({
+        cloudLoadStatus: "empty",
+        failureReason: "云端 app_state 暂无正式数据。",
+      });
+      renderView();
       return;
     }
 
     state.data = clone(cloudData);
     saveLocalData(state.data);
     syncSelections();
+    updateCloudRuntimeStatus({
+      dataSource: "cloud",
+      cloudLoadStatus: "success",
+      failureReason: "",
+      lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
     renderShell();
     renderView();
     replaceHistoryState();
   } catch (error) {
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "failed",
+      failureReason: error.message || "启动时拉取云端正式数据失败。",
+    });
     console.warn("启动时拉取云端正式数据失败，已保留本地数据。", error);
+    renderView();
   }
 }
 
@@ -229,6 +292,7 @@ function renderShell() {
   systemName.textContent = state.data.site.systemName;
   pageFooter.textContent = state.data.site.footerText;
   topBar.hidden = hideTopBar;
+  topBar.className = state.route === "home" ? "topbar topbar-home" : "topbar";
   app.className = hideTopBar ? "detail-page" : "";
   topNav.className = state.route === "home" ? "topnav topnav-home" : "topnav";
 
@@ -298,7 +362,37 @@ function renderView() {
 }
 
 function renderViewWithFeedback(viewHtml) {
-  return `${viewHtml}${renderAppNotice()}${renderAppDialog()}`;
+  return `${renderCloudRuntimeBanner()}${viewHtml}${renderAppNotice()}${renderAppDialog()}`;
+}
+
+function shouldShowCloudRuntimeBanner() {
+  const status = state.cloudRuntime || {};
+  if (!status.cloudFirst) {
+    return false;
+  }
+  return !status.sdkLoaded || status.cloudLoadStatus === "failed";
+}
+
+function renderCloudRuntimeBanner() {
+  if (!shouldShowCloudRuntimeBanner()) {
+    return "";
+  }
+  const status = state.cloudRuntime || {};
+  const reason =
+    status.failureReason ||
+    "云端数据未成功加载，当前显示的可能是本地缓存或默认演示数据。";
+
+  return `
+    <section class="cloud-runtime-banner" role="alert">
+      <strong>云端数据未成功加载</strong>
+      <p>${escapeHtml(reason)}</p>
+      <div class="cloud-runtime-meta">
+        <span>Host：${escapeHtml(status.host || window.location.hostname)}</span>
+        <span>SDK：${status.sdkLoaded ? "已加载" : "未加载"}</span>
+        <span>数据来源：${escapeHtml(status.dataSource || "未知")}</span>
+      </div>
+    </section>
+  `;
 }
 
 function renderHomeView() {
@@ -384,6 +478,11 @@ function renderScheduleView() {
   }
 
   return `
+    <section class="schedule-mobile-nav" aria-label="手机端赛程导航">
+      <button class="schedule-mobile-nav-pill" type="button" data-route="home">🏠 首页</button>
+      <button class="schedule-mobile-nav-pill active" type="button" data-route="schedule">📅 赛程日历</button>
+    </section>
+
     <section class="panel schedule-detail-panel">
       <div class="toolbar schedule-detail-toolbar">
         <div class="event-header schedule-detail-header">
@@ -405,7 +504,7 @@ function renderScheduleView() {
 
     ${renderScheduleDayNavigator(event, day)}
 
-    <section class="table-card">
+    <section class="table-card schedule-table-card">
       <div class="table-scroll-x">
         <table class="schedule-table">
           <thead>
@@ -468,22 +567,6 @@ function renderScheduleDayNavigator(event, day) {
           →
         </button>
       </div>
-      ${
-        days.length > 1
-          ? `<div class="schedule-day-tabs">
-              ${days
-                .map(
-                  (item) => `
-                    <button class="schedule-day-tab ${item.id === day?.id ? "active" : ""}" data-select-day="${escapeAttribute(item.id)}">
-                      <span>${escapeHtml(item.label || "比赛日")}</span>
-                      <small>${escapeHtml(item.date || "待定")}</small>
-                    </button>
-                  `
-                )
-                .join("")}
-            </div>`
-          : ""
-      }
       <p class="schedule-day-note">${escapeHtml(day?.note || "请选择比赛日查看详细赛程。")}</p>
     </section>
   `;
@@ -3026,10 +3109,68 @@ function renderAdminExportTab() {
       </div>
       <p class="hint">
         GitHub Pages 正式站点打开时会自动优先读取云端正式数据，并同步刷新站点本地缓存。
-        ${cloudClient ? "" : " 当前 Supabase Publishable Key 仍是占位值，云端拉取/发布按钮在替换真实 key 前无法成功执行。"}
+        ${cloudClient ? "" : " 当前 Supabase SDK 或 Publishable Key 未就绪，云端拉取/发布按钮暂时无法成功执行。"}
       </p>
+      ${renderCloudDiagnosticsPanel()}
     </section>
   `;
+}
+
+function renderCloudDiagnosticsPanel() {
+  const status = state.cloudRuntime || {};
+  const items = [
+    ["Supabase SDK", status.sdkLoaded ? "已加载" : "未加载"],
+    ["云端客户端", status.clientReady ? "已初始化" : "未初始化"],
+    ["当前 Host", status.host || window.location.hostname],
+    ["Cloud-first", status.cloudFirst ? "是" : "否"],
+    ["当前数据来源", status.dataSource || "未知"],
+    ["云端拉取状态", renderCloudLoadStatusText(status.cloudLoadStatus)],
+    ["构建版本", status.buildVersion || APP_BUILD_VERSION],
+  ];
+  if (status.lastCloudSyncAt) {
+    items.push(["最近云端同步", status.lastCloudSyncAt]);
+  }
+
+  return `
+    <div class="cloud-diagnostics">
+      <div class="cloud-diagnostics-head">
+        <strong>云端运行诊断</strong>
+        <span class="badge ${status.clientReady ? "" : "badge-danger"}">
+          ${status.clientReady ? "云端功能可用" : "云端功能异常"}
+        </span>
+      </div>
+      <div class="cloud-diagnostics-grid">
+        ${items
+          .map(
+            ([label, value]) => `
+              <div class="cloud-diagnostics-item">
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+      ${
+        status.failureReason
+          ? `<p class="cloud-diagnostics-error">${escapeHtml(status.failureReason)}</p>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderCloudLoadStatusText(status) {
+  const labels = {
+    idle: "未开始",
+    waiting: "等待启动拉取",
+    loading: "拉取中",
+    success: "success",
+    failed: "failed",
+    empty: "云端暂无数据",
+    not_applicable: "当前域名不自动拉取",
+  };
+  return labels[status] || status || "未知";
 }
 
 function renderAdminAdvancedTab(context) {
@@ -9505,8 +9646,17 @@ async function uploadToCloud() {
 
   try {
     await saveCloudData(state.data);
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "success",
+      failureReason: "",
+      lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
     window.alert("上传成功，云端正式数据已被当前本地数据覆盖。");
   } catch (error) {
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "failed",
+      failureReason: error.message || "请检查 Supabase 配置或表权限。",
+    });
     console.error("上传云端失败：", error);
     window.alert(`上传失败：${error.message || "请检查 Supabase 配置或表权限。"}`);
   }
@@ -9524,8 +9674,16 @@ async function downloadFromCloud() {
   }
 
   try {
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "loading",
+      failureReason: "",
+    });
     const cloudData = await loadCloudData();
     if (!cloudData) {
+      updateCloudRuntimeStatus({
+        cloudLoadStatus: "empty",
+        failureReason: "云端还没有正式数据。",
+      });
       window.alert("云端还没有正式数据，当前不会覆盖本地数据。");
       return;
     }
@@ -9534,10 +9692,20 @@ async function downloadFromCloud() {
     state.data = clone(cloudData);
     saveLocalData(state.data);
     syncSelections();
+    updateCloudRuntimeStatus({
+      dataSource: "cloud",
+      cloudLoadStatus: "success",
+      failureReason: "",
+      lastCloudSyncAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    });
     renderShell();
     renderView();
     window.alert("拉取成功，当前本地数据已被云端正式数据覆盖。");
   } catch (error) {
+    updateCloudRuntimeStatus({
+      cloudLoadStatus: "failed",
+      failureReason: error.message || "请检查 Supabase 配置或表权限。",
+    });
     console.error("拉取云端数据失败：", error);
     window.alert(`拉取失败：${error.message || "请检查 Supabase 配置或表权限。"}`);
   }
