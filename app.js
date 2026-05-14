@@ -4,7 +4,7 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-structured-results-1";
+const APP_BUILD_VERSION = "20260514-public-layer-1";
 const STRUCTURED_PUBLISH_TABLES = {
   publishVersions: "publish_versions",
   events: "published_events",
@@ -47,12 +47,21 @@ async function bootstrap() {
       await hydratePublishedScheduleOnStartup();
     } else if (state.route === "results") {
       await hydratePublishedResultsOnStartup();
-    } else {
+    } else if (canUseAppStateFrontendFallback()) {
       await hydrateCloudStateOnStartup({
         frontendDataSource: "app_state_fallback",
         frontendScheduleDataSource: "app_state_fallback",
         homeLoadedAppState: true,
         scheduleLoadedAppState: true,
+      });
+    } else {
+      updateCloudRuntimeStatus({
+        cloudLoadStatus: "not_applicable",
+        frontendDataSource: state.frontendDataSource || "none",
+        frontendScheduleDataSource: state.frontendScheduleDataSource || "none",
+        failureReason: "公开前台仅读取结构化发布表；当前页面不会主动加载 app_state 整包。",
+        homeLoadedAppState: false,
+        scheduleLoadedAppState: false,
       });
     }
   }
@@ -1133,6 +1142,26 @@ function shouldPreferCloudOnStartup() {
   return CLOUD_FIRST_HOSTS.some((host) => window.location.hostname === host);
 }
 
+function isLocalDevelopmentContext() {
+  if (typeof window === "undefined" || typeof window.location === "undefined") {
+    return false;
+  }
+  const { protocol, hostname } = window.location;
+  return protocol === "file:" || ["localhost", "127.0.0.1", "::1"].includes(hostname);
+}
+
+function hasAdminDebugFlag() {
+  try {
+    return new URLSearchParams(window.location.search).get("debug") === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function canUseAppStateFrontendFallback() {
+  return isLocalDevelopmentContext() || state.isAdminAuthenticated || (hasAdminDebugFlag() && state.isAdminAuthenticated);
+}
+
 function getCloudClientInitializationMessage() {
   if (!window.supabase?.createClient) {
     return "Supabase SDK 未加载，无法读取云端数据。当前显示的可能是本地缓存或默认数据。";
@@ -1268,9 +1297,28 @@ async function hydratePublishedHomeOnStartup() {
   } catch (error) {
     const message = error.message || "结构化赛事列表读取失败。";
     state.publishedEvents = null;
-    state.frontendDataSource = "app_state_fallback";
     state.publishedEventsStatus = "failed";
     state.publishedEventsError = message;
+
+    if (!canUseAppStateFrontendFallback()) {
+      state.frontendDataSource = "none";
+      updateCloudRuntimeStatus({
+        dataSource: state.dataSource || getInitialDataSourceLabel(),
+        cloudLoadStatus: "failed",
+        failureReason: message,
+        frontendDataSource: "none",
+        publishedEventsStatus: "failed",
+        publishedEventsError: message,
+        homeLoadedAppState: false,
+      });
+      console.warn("结构化赛事列表读取失败；正式前台已阻止 app_state 整包回退。", error);
+      renderShell();
+      renderView();
+      replaceHistoryState();
+      return;
+    }
+
+    state.frontendDataSource = "app_state_fallback";
     updateCloudRuntimeStatus({
       frontendDataSource: "app_state_fallback",
       publishedEventsStatus: "failed",
@@ -1288,6 +1336,14 @@ async function hydratePublishedHomeOnStartup() {
 async function loadAppStateForPublishedEventDetails(eventId) {
   if (!shouldPreferCloudOnStartup()) {
     return state.data.events.some((event) => event.id === eventId);
+  }
+
+  if (!canUseAppStateFrontendFallback()) {
+    updateCloudRuntimeStatus({
+      detailAppStateStatus: "blocked",
+      detailAppStateError: "公开前台不再按需加载 app_state 整包。",
+    });
+    return false;
   }
 
   updateCloudRuntimeStatus({
@@ -1332,7 +1388,7 @@ async function hydratePublishedScheduleOnStartup() {
   }
 
   const loaded = await hydratePublishedScheduleForEvent(state.selectedEventId, { render: true });
-  if (!loaded && state.frontendScheduleDataSource !== "none") {
+  if (!loaded && state.frontendScheduleDataSource !== "none" && canUseAppStateFrontendFallback()) {
     await hydrateCloudStateOnStartup({
       frontendDataSource: state.frontendDataSource || "structured-events",
       frontendScheduleDataSource: "app_state_fallback",
@@ -1420,17 +1476,25 @@ async function hydratePublishedScheduleForEvent(eventId, options = {}) {
     return Boolean(result.event);
   } catch (error) {
     const message = error.message || "结构化赛程读取失败。";
+    const allowFallback = canUseAppStateFrontendFallback();
     state.publishedSchedule = null;
     state.publishedScheduleStatus = "failed";
     state.publishedScheduleError = message;
-    state.frontendScheduleDataSource = "app_state_fallback";
+    state.frontendScheduleDataSource = allowFallback ? "app_state_fallback" : "none";
     updateCloudRuntimeStatus({
-      frontendScheduleDataSource: "app_state_fallback",
+      cloudLoadStatus: allowFallback ? state.cloudRuntime?.cloudLoadStatus : "failed",
+      failureReason: allowFallback ? state.cloudRuntime?.failureReason || "" : message,
+      frontendScheduleDataSource: state.frontendScheduleDataSource,
       publishedScheduleStatus: "failed",
       publishedScheduleError: message,
-      scheduleLoadedAppState: true,
+      scheduleLoadedAppState: allowFallback,
     });
-    console.warn("结构化赛程读取失败，准备回退 app_state 兼容模式。", error);
+    console.warn(
+      allowFallback
+        ? "结构化赛程读取失败，准备回退 app_state 兼容模式。"
+        : "结构化赛程读取失败；正式前台已阻止 app_state 整包回退。",
+      error
+    );
     return false;
   }
 }
@@ -1822,7 +1886,19 @@ function getHomeEmptyMessage() {
 }
 
 function renderFrontendHomeDataNotice() {
-  if (state.frontendDataSource !== "app_state_fallback" || !state.publishedEventsError) {
+  if (!state.publishedEventsError) {
+    return "";
+  }
+
+  if (state.frontendDataSource === "none") {
+    return `
+      <div class="cloud-diagnostics-warning">
+        结构化赛事列表读取失败，正式前台已停止读取 app_state 整包：${escapeHtml(state.publishedEventsError)}
+      </div>
+    `;
+  }
+
+  if (state.frontendDataSource !== "app_state_fallback") {
     return "";
   }
 
@@ -2086,11 +2162,10 @@ function renderGroupsView() {
   if (!entry.groups?.length) {
     return `
       <section class="empty-card">
-        <h2>这个项目还没有录入分组</h2>
-        <p class="hint">你可以去后台给该项目新增分组和运动员名单。</p>
+        <h2>这个项目还没有公布分组</h2>
+        <p class="hint">请稍后刷新，或返回日程查看其他项目。</p>
         <div class="table-actions">
           <button class="ghost-button" data-route="schedule">回到赛程</button>
-          <button class="cta-button" data-route="admin">进入后台录入</button>
         </div>
       </section>
     `;
@@ -2150,89 +2225,43 @@ function renderGroupsDetailMarkup(event, day, entry) {
   );
   const previousGroup = entry.groups[currentGroupIndex - 1] || null;
   const nextGroup = entry.groups[currentGroupIndex + 1] || null;
-  const rankColumns = getEntryRankColumns(entry);
-  const emptyGroupColspan = rankColumns.length + 7;
+  const rawGroupSummary = normalizeText(currentGroup?.summary);
+  const groupSummary = /补充分组说明/.test(rawGroupSummary) ? "" : rawGroupSummary;
 
   return `
-    <section class="panel group-desktop-header">
-      <div class="group-header">
-        <h2>${escapeHtml(event.name)}</h2>
-        <p>${escapeHtml(formatEntryDisplayTitle(entry))}</p>
-      </div>
-      <div class="toolbar">
-        <div class="badge-row">
-          <span class="badge">${escapeHtml(day?.label || "")}</span>
-          <span class="badge">${escapeHtml(day?.date || "")}</span>
-          <span class="badge">${escapeHtml(entry.time || "")}</span>
-        </div>
-        <div class="toolbar-actions">
-          <button class="ghost-button" data-route="schedule">返回日程</button>
-          <button class="cta-button" data-admin-action="open-current-group-in-admin">编辑分组</button>
-        </div>
+    <section class="group-detail-nav" aria-label="分组详情导航">
+      <button class="group-detail-nav-pill" type="button" data-route="home">🏠 首页</button>
+      <button class="group-detail-nav-pill active" type="button" data-route="schedule">📅 日程表</button>
+    </section>
+
+    <section class="group-detail-hero">
+      <h2>${escapeHtml(event.name)}</h2>
+      <p>${escapeHtml(formatEntryDisplayTitle(entry))}</p>
+      <div class="group-detail-submeta">
+        ${day?.label ? `<span>${escapeHtml(day.label)}</span>` : ""}
+        ${day?.date ? `<span>${escapeHtml(day.date)}</span>` : ""}
+        ${entry.time ? `<span>${escapeHtml(entry.time)}</span>` : ""}
       </div>
     </section>
 
-    <section class="selector-bar group-desktop-selector">
-      <div class="toolbar">
-        <div>
-          <div class="entry-title">${escapeHtml(currentGroup?.name || "")} / 共 ${entry.groups.length} 组</div>
-          <p class="hint">${escapeHtml(currentGroup?.summary || "可在后台补充分组说明。")}</p>
-        </div>
-        <div class="chips">
-          ${entry.groups
-            .map(
-              (group) => `
-                <button class="chip ${group.id === currentGroup?.id ? "active" : ""}" data-select-group="${group.id}">
-                  ${escapeHtml(group.name)}
-                </button>
-              `
-            )
-            .join("")}
-        </div>
-      </div>
-    </section>
-
-    <section class="group-mobile-hero">
-      <div class="group-mobile-hero-card">
-        <p class="group-mobile-hero-kicker">赛事分组</p>
-        <h2>${escapeHtml(event.name)}</h2>
-        <p>${escapeHtml(formatEntryDisplayTitle(entry))}</p>
-        <div class="table-actions group-mobile-actions">
-          <button class="ghost-button" data-route="schedule">返回日程</button>
-          <button class="cta-button" data-admin-action="open-current-group-in-admin">编辑分组</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="group-mobile-switcher">
-      <div class="group-mobile-switcher-card">
-        <div class="group-mobile-nav">
-          <button
-            class="group-mobile-nav-button"
-            ${previousGroup ? `data-select-group="${previousGroup.id}"` : "disabled"}
-            aria-label="上一组"
-          >
-            ‹
-          </button>
-          <div class="group-mobile-nav-center">
-            <p class="group-mobile-nav-meta">当前第 ${currentGroupIndex + 1} 组 / 共 ${entry.groups.length} 组</p>
-            <div class="group-mobile-nav-title">${escapeHtml(currentGroup?.name || "")}</div>
+    <section class="group-detail-switcher">
+      <div class="group-detail-switch-row">
+        <button
+          class="group-detail-arrow"
+          ${previousGroup ? `data-select-group="${previousGroup.id}"` : "disabled"}
+          aria-label="上一组"
+        >
+          ←
+        </button>
+        <div class="group-detail-switch-center">
+          <div class="group-detail-count">
+            第 <strong>${currentGroupIndex + 1}</strong> 组 / 共 <strong>${entry.groups.length}</strong> 组
           </div>
-          <button
-            class="group-mobile-nav-button"
-            ${nextGroup ? `data-select-group="${nextGroup.id}"` : "disabled"}
-            aria-label="下一组"
-          >
-            ›
-          </button>
-        </div>
-        <div class="field">
-          <label for="group-mobile-select">切换分组</label>
-          <select id="group-mobile-select" data-group-select-mobile>
+          <select class="group-detail-select" data-group-select-mobile aria-label="选择分组">
             ${entry.groups
               .map(
                 (group) => `
-                  <option value="${group.id}" ${group.id === currentGroup?.id ? "selected" : ""}>
+                  <option value="${escapeAttribute(group.id)}" ${group.id === currentGroup?.id ? "selected" : ""}>
                     ${escapeHtml(group.name)}
                   </option>
                 `
@@ -2240,35 +2269,39 @@ function renderGroupsDetailMarkup(event, day, entry) {
               .join("")}
           </select>
         </div>
-        <p class="hint">${escapeHtml(currentGroup?.summary || "可在后台补充分组说明。")}</p>
+        <button
+          class="group-detail-arrow"
+          ${nextGroup ? `data-select-group="${nextGroup.id}"` : "disabled"}
+          aria-label="下一组"
+        >
+          →
+        </button>
       </div>
+      ${groupSummary ? `<p class="group-detail-summary">${escapeHtml(groupSummary)}</p>` : ""}
     </section>
 
-    <section class="group-mobile-list">
+    <section class="group-detail-athletes">
       ${renderEntryRankNotice(entry)}
       ${
         currentGroup?.athletes?.length
           ? currentGroup.athletes
               .map(
                 (athlete) => `
-	                  <article class="athlete-mobile-card">
-	                    <div class="athlete-mobile-rank">
-	                      <span class="athlete-mobile-rank-label">名次</span>
-	                      <strong>${escapeHtml(getAthleteDisplayRank(athlete, entry) || "-")}</strong>
-	                    </div>
-                    <div class="athlete-mobile-main">
-                      <div class="athlete-mobile-head">
-                        <span class="athlete-mobile-bib">${escapeHtml(athlete.bib || "-")}</span>
+                  <article class="group-athlete-card">
+                    <div class="group-athlete-rank">
+                      <span>名次</span>
+                      <strong>${escapeHtml(getAthleteDisplayRank(athlete, entry) || "-")}</strong>
+                    </div>
+                    <div class="group-athlete-main">
+                      <div class="group-athlete-head">
+                        <span class="group-athlete-bib">${escapeHtml(athlete.bib || athlete.bibNo || "-")}</span>
                         <h3>${escapeHtml(athlete.name || "-")}</h3>
                       </div>
-                      <p class="athlete-mobile-team">${escapeHtml(athlete.team || "-")}</p>
-                      <div class="athlete-mobile-meta">
-                        <span class="athlete-mobile-chip">道次 ${escapeHtml(athlete.lane || "-")}</span>
-                        <span class="athlete-mobile-chip">成绩 ${escapeHtml(athlete.result || "-")}</span>
-                        <span class="athlete-mobile-chip athlete-mobile-note-chip">
-                          备注
-                          <span class="${athlete.note ? "athlete-mobile-note-value" : ""}">${escapeHtml(athlete.note || "-")}</span>
-                        </span>
+                      <p class="group-athlete-team">${escapeHtml(athlete.team || athlete.organization || "-")}</p>
+                      <div class="group-athlete-meta">
+                        ${athlete.lane ? `<span>道次 ${escapeHtml(athlete.lane)}</span>` : ""}
+                        ${athlete.result ? `<span>成绩 ${escapeHtml(athlete.result)}</span>` : ""}
+                        ${athlete.note ? `<span class="group-athlete-note">备注 ${escapeHtml(athlete.note)}</span>` : ""}
                         ${renderMergeInfoCell(athlete)}
                       </div>
                     </div>
@@ -2276,50 +2309,8 @@ function renderGroupsDetailMarkup(event, day, entry) {
                 `
               )
               .join("")
-          : `<div class="empty-card"><p class="hint">当前分组还没有录入运动员名单。</p></div>`
+          : `<div class="group-athlete-empty">暂无运动员</div>`
       }
-    </section>
-
-    <section class="table-card group-desktop-table">
-      ${renderEntryRankNotice(entry)}
-      <div class="table-scroll-x">
-        <table class="group-table">
-          <thead>
-            <tr>
-              ${rankColumns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}
-              <th>道次</th>
-              <th>号码</th>
-              <th>姓名</th>
-              <th>单位</th>
-              <th>来源</th>
-              <th>成绩</th>
-              <th>备注</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${
-              currentGroup?.athletes?.length
-                ? currentGroup.athletes
-                    .map(
-	                      (athlete) => `
-	                        <tr>
-	                          ${rankColumns.map((column) => `<td data-label="${escapeAttribute(column.label)}">${escapeHtml(getAthleteRankColumnValue(athlete, column))}</td>`).join("")}
-	                          <td data-label="道次">${escapeHtml(athlete.lane || "")}</td>
-                          <td data-label="号码">${escapeHtml(athlete.bib || "")}</td>
-                          <td data-label="姓名">${escapeHtml(athlete.name || "")}</td>
-                          <td data-label="单位">${escapeHtml(athlete.team || "")}</td>
-                          <td data-label="来源">${renderMergeInfoCell(athlete)}</td>
-                          <td data-label="成绩">${escapeHtml(athlete.result || "")}</td>
-                          <td data-label="备注">${escapeHtml(athlete.note || "")}</td>
-                        </tr>
-                      `
-                    )
-                    .join("")
-	                : `<tr><td colspan="${emptyGroupColspan}">当前分组还没有录入运动员名单。</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
     </section>
   `;
 }
@@ -4694,6 +4685,7 @@ function renderAdminExportTab() {
 
 function renderCloudDiagnosticsPanel() {
   const status = state.cloudRuntime || {};
+  const publicFallbackRisk = hasPublicAppStateFallbackRisk(status);
   const items = [
     ["Supabase SDK", status.sdkLoaded ? "已加载" : "未加载"],
     ["云端客户端", status.clientReady ? "已初始化" : "未初始化"],
@@ -4741,6 +4733,7 @@ function renderCloudDiagnosticsPanel() {
           ${status.clientReady ? "云端功能可用" : "云端功能异常"}
         </span>
       </div>
+      ${renderPublicDataLayerSummary(status, publicFallbackRisk)}
       <div class="cloud-diagnostics-grid">
         ${items
           .map(
@@ -4753,6 +4746,11 @@ function renderCloudDiagnosticsPanel() {
           )
           .join("")}
       </div>
+      ${
+        publicFallbackRisk
+          ? `<p class="cloud-diagnostics-warning">前台仍存在 app_state 兼容读取，建议确认是否只在本地开发、管理员或 debug 模式下使用。</p>`
+          : ""
+      }
       ${
         status.failureReason
           ? `<p class="cloud-diagnostics-error">${escapeHtml(status.failureReason)}</p>`
@@ -4796,6 +4794,67 @@ function renderCloudDiagnosticsPanel() {
       ${renderStructuredPublishCounts(status.structuredPublishCounts)}
     </div>
   `;
+}
+
+function renderPublicDataLayerSummary(status, publicFallbackRisk) {
+  const summaryItems = [
+    ["首页", formatPublicDataSource(status.frontendDataSource || state.frontendDataSource || "none")],
+    ["赛程", formatPublicDataSource(status.frontendScheduleDataSource || state.frontendScheduleDataSource || "none")],
+    ["分组", formatPublicDataSource(status.groupDetailDataSource || state.frontendGroupDataSource || "none")],
+    ["成绩", formatPublicDataSource(status.frontendResultsDataSource || state.frontendResultsDataSource || "none")],
+    ["前台 app_state fallback", publicFallbackRisk ? "有风险" : "否"],
+  ];
+
+  return `
+    <div class="public-data-layer-summary">
+      <div class="public-data-layer-title">
+        <strong>公开数据层摘要</strong>
+        <span class="badge ${publicFallbackRisk ? "badge-danger" : ""}">
+          ${publicFallbackRisk ? "存在兼容读取" : "已结构化"}
+        </span>
+      </div>
+      <div class="public-data-layer-grid">
+        ${summaryItems
+          .map(
+            ([label, value]) => `
+              <div class="public-data-layer-item">
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function formatPublicDataSource(source) {
+  const labels = {
+    "structured-events": "structured-events",
+    "structured-schedule": "structured-schedule",
+    "structured-groups": "structured-groups",
+    "structured-results": "structured-results",
+    app_state_fallback: "fallback",
+    loading: "loading",
+    none: "none",
+    default: "default",
+  };
+  return labels[source] || source || "none";
+}
+
+function hasPublicAppStateFallbackRisk(status = {}) {
+  return Boolean(
+    status.homeLoadedAppState ||
+      status.scheduleLoadedAppState ||
+      status.groupDetailLoadedAppState ||
+      status.resultsLoadedAppState ||
+      status.frontendDataSource === "app_state_fallback" ||
+      status.frontendScheduleDataSource === "app_state_fallback" ||
+      status.groupDetailDataSource === "app_state_fallback" ||
+      status.frontendGroupDataSource === "app_state_fallback" ||
+      status.frontendResultsDataSource === "app_state_fallback"
+  );
 }
 
 function formatNullableCount(value) {
@@ -7878,12 +7937,14 @@ async function openEventFromHome(eventId, nextRoute = "schedule") {
       return;
     }
     if (!loaded && state.frontendScheduleDataSource === "app_state_fallback") {
-      await hydrateCloudStateOnStartup({
-        frontendDataSource: state.frontendDataSource || "structured-events",
-        frontendScheduleDataSource: "app_state_fallback",
-        homeLoadedAppState: Boolean(state.cloudRuntime?.homeLoadedAppState),
-        scheduleLoadedAppState: true,
-      });
+      if (canUseAppStateFrontendFallback()) {
+        await hydrateCloudStateOnStartup({
+          frontendDataSource: state.frontendDataSource || "structured-events",
+          frontendScheduleDataSource: "app_state_fallback",
+          homeLoadedAppState: Boolean(state.cloudRuntime?.homeLoadedAppState),
+          scheduleLoadedAppState: true,
+        });
+      }
       setRoute("schedule");
       return;
     }
@@ -7906,7 +7967,13 @@ async function openEventFromHome(eventId, nextRoute = "schedule") {
     : false;
   const hasLocalDetails = state.data.events.some((event) => event.id === eventId);
 
-  if (isPublishedHomeEvent && shouldPreferCloudOnStartup() && !hasLocalDetails && state.dataSource !== "cloud") {
+  if (
+    isPublishedHomeEvent &&
+    shouldPreferCloudOnStartup() &&
+    !hasLocalDetails &&
+    state.dataSource !== "cloud" &&
+    canUseAppStateFrontendFallback()
+  ) {
     const hasDetails = await loadAppStateForPublishedEventDetails(eventId);
     if (!hasDetails) {
       showAppDialog({
@@ -7924,7 +7991,9 @@ async function openEventFromHome(eventId, nextRoute = "schedule") {
     showAppDialog({
       eyebrow: "赛事详情",
       title: "没有找到赛事详情",
-      message: "当前首页列表来自结构化发布表，但本地兼容数据中没有这个赛事的完整赛程详情。",
+      message: shouldPreferCloudOnStartup()
+        ? "当前公开前台只读取结构化发布表，请从赛事日程进入已发布赛程。"
+        : "当前首页列表来自结构化发布表，但本地兼容数据中没有这个赛事的完整赛程详情。",
       confirmText: "知道了",
       cancelText: "",
     });
@@ -7955,7 +8024,7 @@ async function openScheduleRoute() {
   }
 
   const loaded = await hydratePublishedScheduleForEvent(preferredEventId, { render: false });
-  if (!loaded && state.frontendScheduleDataSource !== "none") {
+  if (!loaded && state.frontendScheduleDataSource !== "none" && canUseAppStateFrontendFallback()) {
     await hydrateCloudStateOnStartup({
       frontendDataSource: state.frontendDataSource || "structured-events",
       frontendScheduleDataSource: "app_state_fallback",
