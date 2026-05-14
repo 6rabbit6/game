@@ -4,7 +4,7 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-structured-groups-1";
+const APP_BUILD_VERSION = "20260514-structured-results-1";
 const STRUCTURED_PUBLISH_TABLES = {
   publishVersions: "publish_versions",
   events: "published_events",
@@ -45,6 +45,8 @@ async function bootstrap() {
       await hydratePublishedHomeOnStartup();
     } else if (state.route === "schedule") {
       await hydratePublishedScheduleOnStartup();
+    } else if (state.route === "results") {
+      await hydratePublishedResultsOnStartup();
     } else {
       await hydrateCloudStateOnStartup({
         frontendDataSource: "app_state_fallback",
@@ -513,6 +515,244 @@ function mergePublishedResultIntoAthlete(athlete, result) {
   return athlete;
 }
 
+async function loadPublishedResults(eventId) {
+  ensureCloudClientReady();
+
+  const activeVersion = await loadActivePublishVersion();
+  const publishVersion = activeVersion?.version || "";
+  if (!publishVersion) {
+    return {
+      publishVersion: "",
+      event: null,
+      rows: [],
+      counts: createPublishedResultsCounts(),
+    };
+  }
+
+  let targetEventId = eventId || state.resultSearchEventId || state.selectedEventId || "";
+  if (!targetEventId) {
+    const eventsResult = await loadPublishedEvents();
+    state.publishedEvents = eventsResult.events;
+    targetEventId = eventsResult.events[0]?.id || "";
+  }
+
+  if (!targetEventId) {
+    return {
+      publishVersion,
+      event: null,
+      rows: [],
+      counts: createPublishedResultsCounts(),
+    };
+  }
+
+  const [eventResult, days, entries, groupsResult, athletesResult, resultsResult] = await Promise.all([
+    loadPublishedEventDetail(targetEventId, publishVersion),
+    loadPublishedEventDays(targetEventId, publishVersion),
+    loadPublishedScheduleEntries(targetEventId, publishVersion),
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.entryGroups)
+      .select("id, event_id, entry_id, name, summary, sort_order")
+      .eq("publish_version", publishVersion)
+      .eq("event_id", targetEventId)
+      .order("sort_order", { ascending: true }),
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.groupAthletes)
+      .select("id, event_id, entry_id, group_id, bib, lane, name, organization, gender, birth_date, rank, result, note, source, original_competition_key, original_group_name, original_project_name, merge_type, sort_order")
+      .eq("publish_version", publishVersion)
+      .eq("event_id", targetEventId)
+      .order("entry_id", { ascending: true })
+      .order("group_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("bib", { ascending: true }),
+    cloudClient
+      .from(STRUCTURED_PUBLISH_TABLES.results)
+      .select("id, event_id, entry_id, group_id, athlete_id, result, rank, merged_overall_rank, original_rank, qualification_type, status")
+      .eq("publish_version", publishVersion)
+      .eq("event_id", targetEventId),
+  ]);
+
+  if (groupsResult.error) {
+    throw groupsResult.error;
+  }
+  if (athletesResult.error) {
+    throw athletesResult.error;
+  }
+  if (resultsResult.error) {
+    throw resultsResult.error;
+  }
+
+  const event = eventResult.event || null;
+  if (!event) {
+    return {
+      publishVersion,
+      event: null,
+      rows: [],
+      counts: createPublishedResultsCounts({
+        days: days.length,
+        entries: entries.length,
+        groups: (groupsResult.data || []).length,
+        athletes: (athletesResult.data || []).length,
+        results: (resultsResult.data || []).length,
+      }),
+    };
+  }
+
+  const daysById = new Map(days.map((day) => [day.id, day]));
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+  const groupsById = new Map((groupsResult.data || []).map((row) => {
+    const group = mapPublishedEntryGroupRow(row);
+    return [group.id, group];
+  }));
+  const resultsByAthleteId = new Map();
+  (resultsResult.data || []).forEach((result) => {
+    if (result.athlete_id) {
+      resultsByAthleteId.set(result.athlete_id, result);
+    }
+  });
+
+  const rows = (athletesResult.data || []).map((athleteRow) => {
+    const athlete = mapPublishedGroupAthleteRow(athleteRow);
+    const result = resultsByAthleteId.get(athlete.id) || null;
+    mergePublishedResultIntoAthlete(athlete, result);
+    return mapPublishedResultSearchRow({
+      event,
+      day: daysById.get(athlete.entryId ? entriesById.get(athlete.entryId)?.dayId : "") || null,
+      entry: entriesById.get(athlete.entryId) || null,
+      group: groupsById.get(athlete.groupId) || null,
+      athlete,
+    });
+  });
+
+  return {
+    publishVersion,
+    event,
+    rows,
+    counts: createPublishedResultsCounts({
+      days: days.length,
+      entries: entries.length,
+      groups: (groupsResult.data || []).length,
+      athletes: (athletesResult.data || []).length,
+      results: (resultsResult.data || []).length,
+      rows: rows.length,
+    }),
+  };
+}
+
+async function loadPublishedResultsForEntry(entryId) {
+  const eventId = state.publishedSchedule?.event?.id || state.selectedEventId || state.resultSearchEventId || "";
+  const result = await loadPublishedResults(eventId);
+  return {
+    ...result,
+    rows: result.rows.filter((row) => row.entryId === entryId),
+  };
+}
+
+function createPublishedResultsCounts(overrides = {}) {
+  return {
+    days: overrides.days || 0,
+    entries: overrides.entries || 0,
+    groups: overrides.groups || 0,
+    athletes: overrides.athletes || 0,
+    results: overrides.results || 0,
+    rows: overrides.rows || 0,
+  };
+}
+
+function mapPublishedResultSearchRow({ event, day, entry, group, athlete }) {
+  const mergedRaceName = entry?.isMergedRace
+    ? `${entry.division || ""} ${entry.projectName || ""}`.trim()
+    : "";
+  return {
+    eventId: event?.id || athlete.eventId || "",
+    eventName: event?.name || "",
+    dayId: day?.id || entry?.dayId || "",
+    dayLabel: day?.label || "",
+    dayDate: day?.date || "",
+    entryId: entry?.id || athlete.entryId || "",
+    groupId: group?.id || athlete.groupId || "",
+    groupName: group?.name || "",
+    raceGroupName: group?.name || "",
+    time: entry?.time || "",
+    bib: athlete.bib || "",
+    lane: athlete.lane || "",
+    name: athlete.name || "",
+    team: athlete.organization || athlete.team || "",
+    organization: athlete.organization || athlete.team || "",
+    projectName: entry?.projectName || athlete.originalProjectName || "",
+    division: entry?.division || "",
+    gender: athlete.gender || entry?.gender || "",
+    round: entry?.roundName || entry?.round || "",
+    roundName: entry?.roundName || entry?.round || "",
+    result: athlete.result || "",
+    rank: athlete.rank || "",
+    mergedOverallRank: athlete.mergedOverallRank || "",
+    originalRank: athlete.originalRank || "",
+    qualificationType: athlete.qualificationType || "",
+    note: athlete.note || "",
+    source: athlete.source || "",
+    mergeType: athlete.mergeType || "",
+    originalGroupName: athlete.originalGroupName || "",
+    originalProjectName: athlete.originalProjectName || "",
+    originalCompetitionKey: athlete.originalCompetitionKey || "",
+    isMergedRace: Boolean(entry?.isMergedRace),
+    raceMergeMode: entry?.raceMergeMode || "",
+    mergedRaceName,
+    scheduleStatus: entry?.scheduleStatus || "",
+  };
+}
+
+function searchPublishedResults(keyword, options = {}) {
+  const rows = state.publishedResults?.rows || [];
+  const query = normalizeText(keyword).toLowerCase();
+  const queryWithoutLeadingZero = query.replace(/^0+/, "");
+  const projectName = normalizeText(options.projectName).toLowerCase();
+  const eventId = options.eventId || "";
+
+  return rows
+    .map((row, index) => ({
+      row,
+      index,
+      score: scorePublishedResultMatch(row, query, queryWithoutLeadingZero, projectName, eventId),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((item) => item.row);
+}
+
+function scorePublishedResultMatch(row, query, queryWithoutLeadingZero, projectName, eventId) {
+  if (eventId && row.eventId !== eventId) {
+    return 0;
+  }
+
+  const rowProjectName = normalizeText(row.projectName).toLowerCase();
+  const matchesProject = !projectName || rowProjectName.includes(projectName);
+  if (!matchesProject) {
+    return 0;
+  }
+
+  if (!query) {
+    return projectName ? 100 : 0;
+  }
+
+  const bib = normalizeText(row.bib).toLowerCase();
+  const bibWithoutLeadingZero = bib.replace(/^0+/, "");
+  const name = normalizeText(row.name).toLowerCase();
+  const organization = normalizeText(row.organization || row.team).toLowerCase();
+  const division = normalizeText(row.division || row.originalGroupName).toLowerCase();
+  const originalProject = normalizeText(row.originalProjectName).toLowerCase();
+
+  if (bib && bib === query) return 1000;
+  if (bibWithoutLeadingZero && queryWithoutLeadingZero && bibWithoutLeadingZero === queryWithoutLeadingZero) return 950;
+  if (bib && bib.startsWith(query)) return 900;
+  if (name && name === query) return 850;
+  if (name && name.includes(query)) return 760;
+  if (organization && organization.includes(query)) return 620;
+  if (rowProjectName && rowProjectName.includes(query)) return 520;
+  if (originalProject && originalProject.includes(query)) return 500;
+  if (division && division.includes(query)) return 420;
+  return 0;
+}
+
 
 async function saveCloudData(data) {
   ensureCloudClientReady();
@@ -930,6 +1170,9 @@ function updateCloudRuntimeStatus(patch = {}) {
   if (patch.frontendGroupDataSource) {
     state.frontendGroupDataSource = patch.frontendGroupDataSource;
   }
+  if (patch.frontendResultsDataSource) {
+    state.frontendResultsDataSource = patch.frontendResultsDataSource;
+  }
   state.cloudRuntime = {
     ...(state.cloudRuntime || {}),
     sdkLoaded: Boolean(window.supabase?.createClient),
@@ -1270,6 +1513,103 @@ async function hydratePublishedGroupDetailForEntry(entryId) {
   }
 }
 
+async function hydratePublishedResultsOnStartup() {
+  if (!shouldPreferCloudOnStartup()) {
+    return;
+  }
+
+  await hydratePublishedResultsForEvent(state.resultSearchEventId || state.selectedEventId || "", { render: true });
+}
+
+async function hydratePublishedResultsForEvent(eventId, options = {}) {
+  if (!shouldPreferCloudOnStartup()) {
+    return false;
+  }
+
+  updateCloudRuntimeStatus({
+    frontendResultsDataSource: "loading",
+    publishedResultsStatus: "loading",
+    publishedResultsError: "",
+    resultsLoadedAppState: false,
+  });
+
+  try {
+    const result = await loadPublishedResults(eventId);
+    const loadedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+    state.publishedResults = result.event
+      ? {
+          publishVersion: result.publishVersion,
+          event: result.event,
+          rows: result.rows,
+          counts: result.counts,
+        }
+      : null;
+    state.publishedResultsStatus = result.publishVersion
+      ? result.event
+        ? result.rows.length
+          ? "success"
+          : "empty"
+        : "empty"
+      : "empty";
+    state.publishedResultsError = "";
+    state.publishedResultsLoadedAt = loadedAt;
+    state.publishedResultsActiveVersion = result.publishVersion || "";
+    state.frontendResultsDataSource = result.event ? "structured-results" : "none";
+
+    if (result.event) {
+      state.resultSearchEventId = result.event.id;
+      state.selectedEventId = result.event.id;
+    }
+
+    updateCloudRuntimeStatus({
+      dataSource: state.dataSource || getInitialDataSourceLabel(),
+      cloudLoadStatus: "success",
+      failureReason: "",
+      frontendResultsDataSource: state.frontendResultsDataSource,
+      publishedResultsStatus: state.publishedResultsStatus,
+      publishedResultsRowsCount: result.counts.rows,
+      publishedResultsAthletesCount: result.counts.athletes,
+      publishedResultsRecordsCount: result.counts.results,
+      publishedResultsLoadedAt: loadedAt,
+      publishedResultsError: "",
+      activePublishVersion: result.publishVersion || state.cloudRuntime?.activePublishVersion || "",
+      resultsLoadedAppState: false,
+      lastCloudSyncAt: loadedAt,
+    });
+
+    if (options.render) {
+      renderShell();
+      renderView();
+      replaceHistoryState();
+    }
+
+    return Boolean(result.event);
+  } catch (error) {
+    const message = error.message || "结构化成绩查询读取失败。";
+    state.publishedResults = null;
+    state.publishedResultsStatus = "failed";
+    state.publishedResultsError = message;
+    state.frontendResultsDataSource = "none";
+    updateCloudRuntimeStatus({
+      frontendResultsDataSource: "none",
+      publishedResultsStatus: "failed",
+      publishedResultsRowsCount: 0,
+      publishedResultsAthletesCount: 0,
+      publishedResultsRecordsCount: 0,
+      publishedResultsLoadedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      publishedResultsError: message,
+      resultsLoadedAppState: false,
+    });
+    console.warn("结构化成绩查询读取失败。", error);
+    if (options.render) {
+      renderShell();
+      renderView();
+      replaceHistoryState();
+    }
+    return false;
+  }
+}
+
 function setRoute(route) {
   state.route = route;
   if (route === "groups" && state.frontendGroupDataSource !== "structured-groups") {
@@ -1350,7 +1690,8 @@ function renderView() {
 
   const hasStructuredScheduleEvent = Boolean(state.publishedSchedule?.event && state.route === "schedule");
   const hasStructuredGroupDetail = Boolean(state.publishedGroupDetail && state.route === "groups");
-  if (!state.data.events.length && state.route !== "admin" && !hasStructuredScheduleEvent && !hasStructuredGroupDetail) {
+  const hasStructuredResultsEvent = Boolean(state.publishedResults?.event && state.route === "results");
+  if (!state.data.events.length && state.route !== "admin" && state.route !== "results" && !hasStructuredScheduleEvent && !hasStructuredGroupDetail && !hasStructuredResultsEvent) {
     viewHtml = `
       <section class="empty-card">
         <h2>还没有赛事数据</h2>
@@ -1984,20 +2325,27 @@ function renderGroupsDetailMarkup(event, day, entry) {
 }
 
 function renderResultSearchView() {
-  const events = state.data.events || [];
+  const events = getResultSearchEvents();
   const selectedEventId = events.some((event) => event.id === state.resultSearchEventId)
     ? state.resultSearchEventId
-    : "";
+    : state.publishedResults?.event?.id || "";
   const keyword = state.resultSearchKeyword || "";
   const projectName = state.resultSearchProjectName || "";
   const hasQuery = Boolean(normalizeText(keyword) || normalizeText(projectName));
   const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
+  const useStructuredResults = state.frontendResultsDataSource === "structured-results" && state.publishedResults?.event;
+  const allowLegacyResults = !shouldPreferCloudOnStartup() || state.isAdminAuthenticated;
   const rows = selectedEvent && hasQuery
-    ? searchAthleteResults(keyword, {
-        eventId: selectedEventId,
-        projectName,
-      })
+    ? useStructuredResults
+      ? searchPublishedResults(keyword, { eventId: selectedEventId, projectName })
+      : allowLegacyResults
+        ? searchAthleteResults(keyword, {
+            eventId: selectedEventId,
+            projectName,
+          })
+        : []
     : [];
+  const canShowResults = selectedEvent && hasQuery;
 
   return `
     <section class="panel result-search-panel">
@@ -2047,15 +2395,18 @@ function renderResultSearchView() {
           <button class="cta-button" data-result-search-submit>查询</button>
         </div>
       </div>
+      ${renderResultSearchDataNotice()}
       ${
-        selectedEvent && hasQuery
+        canShowResults
           ? `<p class="hint">当前查询赛事：${escapeHtml(selectedEvent.name || "未命名赛事")}，共找到 ${rows.length} 条参赛记录。</p>`
+          : selectedEvent
+            ? `<p class="hint">请输入号码、姓名、单位、项目或组别查询成绩。</p>`
           : ""
       }
     </section>
 
     ${
-      selectedEvent && hasQuery
+      canShowResults
         ? `<section class="result-card-list">
             ${
               rows.length
@@ -2071,8 +2422,60 @@ function renderResultSearchView() {
   `;
 }
 
+function getResultSearchEvents() {
+  const structuredEvents = Array.isArray(state.publishedEvents) ? state.publishedEvents : [];
+  const resultEvent = state.publishedResults?.event || null;
+  const eventMap = new Map();
+  [...structuredEvents, resultEvent].filter(Boolean).forEach((event) => {
+    eventMap.set(event.id, event);
+  });
+
+  if (eventMap.size > 0) {
+    return Array.from(eventMap.values()).sort((left, right) => (left.displayOrder || 0) - (right.displayOrder || 0));
+  }
+
+  if (shouldPreferCloudOnStartup() && !state.isAdminAuthenticated) {
+    return [];
+  }
+
+  return state.data.events || [];
+}
+
+function renderResultSearchDataNotice() {
+  if (!shouldPreferCloudOnStartup()) {
+    return "";
+  }
+
+  if (state.frontendResultsDataSource === "loading" || state.publishedResultsStatus === "loading") {
+    return `<div class="cloud-diagnostics-warning">正在读取已发布成绩数据，请稍候。</div>`;
+  }
+
+  if (state.publishedResultsStatus === "failed") {
+    return `
+      <div class="cloud-diagnostics-warning">
+        结构化成绩查询读取失败，请稍后刷新：${escapeHtml(state.publishedResultsError || "未知错误")}
+      </div>
+    `;
+  }
+
+  if (state.publishedResultsStatus === "empty" && !state.publishedResults?.event) {
+    return `<div class="cloud-diagnostics-warning">当前赛事尚未发布成绩。</div>`;
+  }
+
+  if (state.frontendResultsDataSource === "structured-results") {
+    return `<p class="hint">成绩查询当前读取已发布公开数据，不加载后台完整数据。</p>`;
+  }
+
+  if (!state.isAdminAuthenticated) {
+    return `<div class="cloud-diagnostics-warning">成绩查询仅读取已发布公开数据，当前未加载到结构化成绩。</div>`;
+  }
+
+  return "";
+}
+
 function renderResultSearchCard(row) {
   const hasResult = Boolean(row.result);
+  const rankHtml = renderResultSearchRankInfo(row);
   return `
     <article class="result-card">
       <div class="result-card-head">
@@ -2093,19 +2496,26 @@ function renderResultSearchCard(row) {
         <span>赛别：${escapeHtml(row.round || "-")}</span>
         <span>分组：${escapeHtml(row.raceGroupName || "-")}</span>
         <span>道次：${escapeHtml(row.lane || "-")}</span>
-        <span>原小项名次：${escapeHtml(row.rank || "-")}</span>
-        ${
-          row.isMergedRace && row.mergedOverallRank
-            ? `<span>合并总名次：${escapeHtml(row.mergedOverallRank)}</span>`
-            : ""
-        }
+        ${rankHtml}
+        ${row.qualificationType ? `<span>晋级标记：${escapeHtml(row.qualificationType)}</span>` : ""}
       </div>
       <div class="result-card-foot">
-        <strong>${hasResult ? `成绩 ${escapeHtml(row.result)}` : "已报名 / 已分组，成绩暂未录入"}</strong>
+        <strong>${hasResult ? `成绩 ${escapeHtml(row.result)}` : "暂无成绩"}</strong>
         <span>${escapeHtml(row.note || row.scheduleStatus || "")}</span>
       </div>
     </article>
   `;
+}
+
+function renderResultSearchRankInfo(row) {
+  if (row.isMergedRace && row.raceMergeMode === "race_together_rank_separately") {
+    return `
+      <span>总名次：${escapeHtml(row.mergedOverallRank || row.rank || "-")}</span>
+      <span>小项名次：${escapeHtml(row.originalRank || row.rank || "-")}</span>
+    `;
+  }
+
+  return `<span>名次：${escapeHtml(row.rank || row.mergedOverallRank || row.originalRank || "-")}</span>`;
 }
 
 function renderAdminEventSelector(adminEvent, id = "admin-event-select") {
@@ -4311,6 +4721,12 @@ function renderCloudDiagnosticsPanel() {
     ["published_results 数量", formatNullableCount(status.publishedResultsCount)],
     ["分组详情加载时间", status.publishedGroupDetailLoadedAt || "-"],
     ["分组详情加载 app_state 整包", status.groupDetailLoadedAppState ? "是" : "否"],
+    ["成绩查询数据源", status.frontendResultsDataSource || state.frontendResultsDataSource || "none"],
+    ["成绩查询结果行数", formatNullableCount(status.publishedResultsRowsCount)],
+    ["published_group_athletes 查询数量", formatNullableCount(status.publishedResultsAthletesCount)],
+    ["published_results 查询数量", formatNullableCount(status.publishedResultsRecordsCount)],
+    ["成绩查询加载时间", status.publishedResultsLoadedAt || "-"],
+    ["成绩查询加载 app_state 整包", status.resultsLoadedAppState ? "是" : "否"],
     ["构建版本", status.buildVersion || APP_BUILD_VERSION],
   ];
   if (status.lastCloudSyncAt) {
@@ -4370,6 +4786,11 @@ function renderCloudDiagnosticsPanel() {
       ${
         status.publishedGroupDetailError
           ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedGroupDetailError)}</p>`
+          : ""
+      }
+      ${
+        status.publishedResultsError
+          ? `<p class="cloud-diagnostics-warning">${escapeHtml(status.publishedResultsError)}</p>`
           : ""
       }
       ${renderStructuredPublishCounts(status.structuredPublishCounts)}
@@ -7348,6 +7769,10 @@ async function handleClick(event) {
       await openScheduleRoute();
       return;
     }
+    if (routeTarget.dataset.route === "results" && shouldPreferCloudOnStartup()) {
+      await openResultsRoute();
+      return;
+    }
     setRoute(routeTarget.dataset.route);
     return;
   }
@@ -7541,6 +7966,32 @@ async function openScheduleRoute() {
   setRoute("schedule");
 }
 
+async function openResultsRoute() {
+  const publishedEventIds = Array.isArray(state.publishedEvents)
+    ? state.publishedEvents.map((event) => event.id)
+    : [];
+  const selectedPublishedEventId = publishedEventIds.includes(state.resultSearchEventId)
+    ? state.resultSearchEventId
+    : publishedEventIds.includes(state.selectedEventId)
+      ? state.selectedEventId
+      : "";
+  const preferredEventId =
+    selectedPublishedEventId ||
+    state.publishedResults?.event?.id ||
+    (Array.isArray(state.publishedEvents) ? state.publishedEvents[0]?.id : "") ||
+    state.resultSearchEventId ||
+    state.selectedEventId ||
+    "";
+
+  if (preferredEventId) {
+    state.resultSearchEventId = preferredEventId;
+    state.selectedEventId = preferredEventId;
+  }
+
+  await hydratePublishedResultsForEvent(preferredEventId, { render: false });
+  setRoute("results");
+}
+
 async function openEntryFromSchedule(entryId) {
   state.selectedEntryId = entryId;
 
@@ -7595,7 +8046,7 @@ function submitResultSearch() {
   renderView();
 }
 
-function handleChange(event) {
+async function handleChange(event) {
   const preRaceField = event.target.closest("[data-prerace-field]");
   if (preRaceField) {
     updatePreRaceChangeField(preRaceField.dataset.preraceField, preRaceField.value || "");
@@ -7612,6 +8063,9 @@ function handleChange(event) {
   const resultEventSelect = event.target.closest("[data-result-search-event]");
   if (resultEventSelect) {
     state.resultSearchEventId = resultEventSelect.value || "";
+    if (shouldPreferCloudOnStartup()) {
+      await hydratePublishedResultsForEvent(state.resultSearchEventId, { render: false });
+    }
     renderView();
     replaceHistoryState();
     return;
