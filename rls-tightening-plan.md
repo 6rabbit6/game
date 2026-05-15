@@ -9,7 +9,26 @@
 - 分组详情数据源为 `structured-groups`。
 - 成绩查询数据源为 `structured-results`。
 - 普通用户正式域名路径不主动读取 `app_state`。
+- 普通用户访问 `index.html` 时处于 `frontend` mode，不显示后台入口。
+- 管理员访问 `admin.html` 时处于 `admin` mode，默认进入后台登录/管理页。
+- 正式域名下 `?admin=1` 不会让 `index.html` 进入后台模式。
+- `frontend` mode 已通过路由守卫阻止 `admin` route。
+- `frontend` mode 已通过后台 action 守卫阻止导入、导出、发布、删除、规则修改等写操作。
+- `frontend` mode 已禁止 `app_state` fallback，即使浏览器里残留管理员登录态也不走整包兼容。
 - 后台管理员发布、导入、成绩录入、秩序册导出均正常。
+
+## 第 7 阶段软分离状态
+
+当前阶段只做入口和运行模式软分离，不是最终安全隔离：
+
+- `index.html` 固定设置 `window.APP_MODE = "frontend"`。
+- `admin.html` 固定设置 `window.APP_MODE = "admin"`，并带 `noindex,nofollow`。
+- `getAppMode()` 统一判断运行模式。
+- `canAccessRoute(route)` 限制普通前台只能访问 `home / schedule / groups / results`。
+- `assertAdminMode(actionName)` 作为后台写操作的统一软守卫。
+- `allowAppStateFallback()` 在正式前台一律返回 false，后台和本地调试仍可使用兼容数据。
+
+因为前后台仍复用同一套 JS，浏览器仍可能下载后台代码。真正权限安全必须依赖后续 RLS 收口、Edge Function 和前后台 JS 拆包。
 
 ## 匿名用户允许
 

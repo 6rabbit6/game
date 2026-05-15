@@ -105,10 +105,22 @@ function getStorageErrorMessage(error) {
 }
 
 function exportJson() {
+  if (typeof assertAdminMode === "function" && !assertAdminMode("export-json")) {
+    return;
+  }
+  if (typeof ensureAdminAuthenticated === "function" && !ensureAdminAuthenticated()) {
+    return;
+  }
   downloadJsonFile(state.data, "event-system-data.json");
 }
 
 function importJson() {
+  if (typeof assertAdminMode === "function" && !assertAdminMode("import-json")) {
+    return;
+  }
+  if (typeof ensureAdminAuthenticated === "function" && !ensureAdminAuthenticated()) {
+    return;
+  }
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "application/json";

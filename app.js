@@ -4,7 +4,10 @@ const brandName = document.querySelector("#brandName");
 const systemName = document.querySelector("#systemName");
 const topBar = document.querySelector(".topbar");
 const pageFooter = document.querySelector("#pageFooter");
-const APP_BUILD_VERSION = "20260514-public-layer-1";
+const APP_BUILD_VERSION = "20260515-entry-split-1";
+const APP_MODE_FRONTEND = "frontend";
+const APP_MODE_ADMIN = "admin";
+const FRONTEND_ALLOWED_ROUTES = new Set(["home", "schedule", "groups", "results", "result-search"]);
 const STRUCTURED_PUBLISH_TABLES = {
   publishVersions: "publish_versions",
   events: "published_events",
@@ -23,6 +26,107 @@ const appDialogActions = new Map();
 let appNoticeTimer = null;
 let preRaceSearchRenderTimer = null;
 
+function getUrlParams() {
+  try {
+    return new URLSearchParams(window.location.search);
+  } catch (error) {
+    return new URLSearchParams();
+  }
+}
+
+function getAppMode() {
+  if (window.APP_MODE === APP_MODE_ADMIN) {
+    return APP_MODE_ADMIN;
+  }
+
+  const params = getUrlParams();
+  const wantsAdminMode = params.get("admin") === "1" || params.get("mode") === APP_MODE_ADMIN;
+  if (isLocalDevelopmentContext() && wantsAdminMode) {
+    return APP_MODE_ADMIN;
+  }
+
+  if (window.APP_MODE === APP_MODE_FRONTEND) {
+    return APP_MODE_FRONTEND;
+  }
+
+  return APP_MODE_FRONTEND;
+}
+
+function isAdminMode() {
+  return getAppMode() === APP_MODE_ADMIN;
+}
+
+function isFrontendMode() {
+  return getAppMode() === APP_MODE_FRONTEND;
+}
+
+function canAccessRoute(route) {
+  if (isAdminMode()) {
+    return true;
+  }
+  return FRONTEND_ALLOWED_ROUTES.has(route || "home");
+}
+
+function showAdminModeRequiredNotice() {
+  showAppDialog({
+    eyebrow: "后台入口",
+    title: "请从后台入口访问管理端",
+    message: "普通前台只用于查看赛事、赛程、分组和成绩。管理操作请打开 admin.html。",
+    confirmText: "返回赛事首页",
+    cancelText: "",
+    onConfirm: () => {
+      state.route = "home";
+      renderShell();
+      renderView();
+      replaceHistoryState();
+    },
+  });
+}
+
+function assertAdminMode(actionName = "") {
+  if (isAdminMode()) {
+    return true;
+  }
+  console.warn("frontend mode 已阻止后台操作。", actionName);
+  showAdminModeRequiredNotice();
+  return false;
+}
+
+function allowAppStateFallback() {
+  if (isAdminMode()) {
+    return true;
+  }
+  if (isFrontendMode() && !isLocalDevelopmentContext()) {
+    return false;
+  }
+  if (isLocalDevelopmentContext()) {
+    return true;
+  }
+  return hasAdminDebugFlag() && state.isAdminAuthenticated;
+}
+
+function enforceInitialRouteForAppMode() {
+  if (isAdminMode()) {
+    state.route = "admin";
+    return;
+  }
+  if (!canAccessRoute(state.route)) {
+    state.route = "home";
+  }
+}
+
+function renderAdminAccessBlockedView() {
+  return `
+    <section class="empty-card">
+      <h2>请从后台入口访问管理端</h2>
+      <p class="hint">普通前台只开放赛事浏览、赛程、分组和成绩查询。请使用后台入口进行管理操作。</p>
+      <div class="table-actions">
+        <button class="ghost-button" data-route="home">返回赛事首页</button>
+      </div>
+    </section>
+  `;
+}
+
 initializeState();
 bootstrap();
 
@@ -34,6 +138,7 @@ async function bootstrap() {
   });
   await initializeAdminAuth();
   restoreInitialHistoryState();
+  enforceInitialRouteForAppMode();
   syncSelections();
   renderShell();
   renderView();
@@ -1159,7 +1264,7 @@ function hasAdminDebugFlag() {
 }
 
 function canUseAppStateFrontendFallback() {
-  return isLocalDevelopmentContext() || state.isAdminAuthenticated || (hasAdminDebugFlag() && state.isAdminAuthenticated);
+  return allowAppStateFallback();
 }
 
 function getCloudClientInitializationMessage() {
@@ -1207,6 +1312,7 @@ function updateCloudRuntimeStatus(patch = {}) {
     sdkLoaded: Boolean(window.supabase?.createClient),
     clientReady: Boolean(cloudClient),
     host: window.location.hostname,
+    appMode: getAppMode(),
     cloudFirst: shouldPreferCloudOnStartup(),
     buildVersion: APP_BUILD_VERSION,
     ...patch,
@@ -1675,8 +1781,14 @@ async function hydratePublishedResultsForEvent(eventId, options = {}) {
 }
 
 function setRoute(route) {
-  state.route = route;
-  if (route === "groups" && state.frontendGroupDataSource !== "structured-groups") {
+  state.route = route || "home";
+  if (!canAccessRoute(state.route)) {
+    renderShell();
+    renderView();
+    pushHistoryState();
+    return;
+  }
+  if (state.route === "groups" && state.frontendGroupDataSource !== "structured-groups") {
     ensureEntryWithGroups();
   }
   renderShell();
@@ -1685,6 +1797,11 @@ function setRoute(route) {
 }
 
 function enterAdminFromRoute() {
+  if (!isAdminMode()) {
+    setRoute("admin");
+    return;
+  }
+
   if (state.route === "home") {
     clearAdminSelection();
     setRoute("admin");
@@ -1733,6 +1850,7 @@ function renderShell() {
     { id: "groups", label: "分组详情" },
     { id: "admin", label: "后台管理" },
   ].filter((item) => {
+    if (!isAdminMode() && item.id === "admin") return false;
     if (state.route === "home" && item.id === "groups") return false;
     if (state.route === "admin" && item.id === "admin") return false;
     return true;
@@ -1753,17 +1871,31 @@ function renderView() {
   syncSelections();
   let viewHtml = "";
 
+  if (!canAccessRoute(state.route)) {
+    app.innerHTML = renderViewWithFeedback(renderAdminAccessBlockedView());
+    syncPromoteModalLock();
+    return;
+  }
+
   const hasStructuredScheduleEvent = Boolean(state.publishedSchedule?.event && state.route === "schedule");
   const hasStructuredGroupDetail = Boolean(state.publishedGroupDetail && state.route === "groups");
   const hasStructuredResultsEvent = Boolean(state.publishedResults?.event && state.route === "results");
   if (!state.data.events.length && state.route !== "admin" && state.route !== "results" && !hasStructuredScheduleEvent && !hasStructuredGroupDetail && !hasStructuredResultsEvent) {
+    const emptyHint = isAdminMode()
+      ? "请先进入后台创建赛事，或者恢复默认演示数据。"
+      : "赛事数据暂时无法加载，请稍后刷新。";
+    const emptyActions = isAdminMode()
+      ? `
+          <button class="cta-button" data-route="admin">进入后台</button>
+          <button class="ghost-button" data-admin-action="reset-default-data">恢复默认数据</button>
+        `
+      : `<button class="ghost-button" data-route="home">返回赛事首页</button>`;
     viewHtml = `
       <section class="empty-card">
         <h2>还没有赛事数据</h2>
-        <p class="hint">请先进入后台创建赛事，或者恢复默认演示数据。</p>
+        <p class="hint">${escapeHtml(emptyHint)}</p>
         <div class="table-actions">
-          <button class="cta-button" data-route="admin">进入后台</button>
-          <button class="ghost-button" data-admin-action="reset-default-data">恢复默认数据</button>
+          ${emptyActions}
         </div>
       </section>
     `;
@@ -1799,6 +1931,9 @@ function renderViewWithFeedback(viewHtml) {
 }
 
 function shouldShowCloudRuntimeBanner() {
+  if (!isAdminMode()) {
+    return false;
+  }
   const status = state.cloudRuntime || {};
   if (!status.cloudFirst) {
     return false;
@@ -1894,7 +2029,9 @@ function renderFrontendHomeDataNotice() {
   if (state.frontendDataSource === "none") {
     return `
       <div class="cloud-diagnostics-warning">
-        结构化赛事列表读取失败，正式前台已停止读取 app_state 整包：${escapeHtml(state.publishedEventsError)}
+        ${isAdminMode()
+          ? `结构化赛事列表读取失败，正式前台已停止读取 app_state 整包：${escapeHtml(state.publishedEventsError)}`
+          : "赛事数据暂时无法加载，请稍后刷新。"}
       </div>
     `;
   }
@@ -1905,7 +2042,9 @@ function renderFrontendHomeDataNotice() {
 
   return `
     <div class="cloud-diagnostics-warning">
-      结构化赛事列表读取失败，已回退 app_state 兼容模式：${escapeHtml(state.publishedEventsError)}
+      ${isAdminMode()
+        ? `结构化赛事列表读取失败，已回退 app_state 兼容模式：${escapeHtml(state.publishedEventsError)}`
+        : "赛事数据暂时无法加载，请稍后刷新。"}
     </div>
   `;
 }
@@ -1920,7 +2059,7 @@ function renderStatCard(value, label, isClickable = false) {
 }
 
 function renderEventCard(event) {
-  const canRemoveEvent = state.isAdminAuthenticated && state.data.events.some((item) => item.id === event.id);
+  const canRemoveEvent = isAdminMode() && state.isAdminAuthenticated && state.data.events.some((item) => item.id === event.id);
   return `
     <article class="event-card panel" data-open-event="${event.id}" data-route-target="schedule">
       <div class="event-meta">
@@ -1982,7 +2121,7 @@ function renderScheduleView() {
         </div>
         <div class="toolbar-actions">
           <button class="ghost-button" data-route="home">返回首页</button>
-          <button class="cta-button" data-route="admin">进入后台</button>
+          ${isAdminMode() ? `<button class="cta-button" data-route="admin">进入后台</button>` : ""}
         </div>
       </div>
     </section>
@@ -2405,7 +2544,7 @@ function renderResultSearchView() {
   const hasQuery = Boolean(normalizeText(keyword) || normalizeText(projectName));
   const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
   const useStructuredResults = state.frontendResultsDataSource === "structured-results" && state.publishedResults?.event;
-  const allowLegacyResults = !shouldPreferCloudOnStartup() || state.isAdminAuthenticated;
+  const allowLegacyResults = allowAppStateFallback();
   const rows = selectedEvent && hasQuery
     ? useStructuredResults
       ? searchPublishedResults(keyword, { eventId: selectedEventId, projectName })
@@ -4764,11 +4903,16 @@ function renderAdminExportTab() {
 }
 
 function renderCloudDiagnosticsPanel() {
+  if (!isAdminMode()) {
+    return "";
+  }
+
   const status = state.cloudRuntime || {};
   const publicFallbackRisk = hasPublicAppStateFallbackRisk(status);
   const items = [
     ["Supabase SDK", status.sdkLoaded ? "已加载" : "未加载"],
     ["云端客户端", status.clientReady ? "已初始化" : "未初始化"],
+    ["运行模式", status.appMode || getAppMode()],
     ["当前 Host", status.host || window.location.hostname],
     ["Cloud-first", status.cloudFirst ? "是" : "否"],
     ["当前数据来源", status.dataSource || "未知"],
@@ -7537,7 +7681,7 @@ function renderMissingState(text) {
       <p class="hint">${escapeHtml(text)}</p>
       <div class="table-actions">
         <button class="ghost-button" data-route="home">返回首页</button>
-        <button class="cta-button" data-route="admin">进入后台</button>
+        ${isAdminMode() ? `<button class="cta-button" data-route="admin">进入后台</button>` : ""}
       </div>
     </section>
   `;
@@ -7918,6 +8062,9 @@ async function handleClick(event) {
 
   const removeEventButton = event.target.closest("[data-remove-event]");
   if (removeEventButton) {
+    if (!assertAdminMode("remove-event")) {
+      return;
+    }
     if (!ensureAdminAuthenticated()) {
       return;
     }
@@ -7971,6 +8118,9 @@ async function handleClick(event) {
 
   const adminTabButton = event.target.closest("[data-admin-tab]");
   if (adminTabButton) {
+    if (!assertAdminMode("admin-tab")) {
+      return;
+    }
     closePreRaceTargetGroupCombobox({ render: false });
     setActiveAdminTab(adminTabButton.dataset.adminTab);
     return;
@@ -7987,6 +8137,9 @@ async function handleClick(event) {
 
   const authAction = event.target.closest("[data-auth-action]");
   if (authAction) {
+    if (!assertAdminMode(authAction.dataset.authAction)) {
+      return;
+    }
     runAuthAction(authAction.dataset.authAction);
     return;
   }
@@ -8157,6 +8310,9 @@ async function openEntryFromSchedule(entryId) {
 function handleInput(event) {
   const preRaceField = event.target.closest("[data-prerace-field]");
   if (preRaceField) {
+    if (!assertAdminMode("prerace-field")) {
+      return;
+    }
     const field = preRaceField.dataset.preraceField;
     updatePreRaceChangeField(field, preRaceField.value || "");
     if (field === "keyword") {
@@ -8167,6 +8323,9 @@ function handleInput(event) {
 
   const manualField = event.target.closest("[data-manual-registration-field]");
   if (manualField) {
+    if (!assertAdminMode("manual-registration-field")) {
+      return;
+    }
     updateManualRegistrationPanelValue(manualField);
     return;
   }
@@ -8185,6 +8344,9 @@ function handleInput(event) {
 
   const modelField = event.target.closest("[data-model]");
   if (modelField && shouldUpdateModelWithoutFullRender(modelField)) {
+    if (!assertAdminMode("model-update")) {
+      return;
+    }
     updateModelWithoutFullRender(modelField, { save: false });
   }
 }
@@ -8198,6 +8360,9 @@ function submitResultSearch() {
 async function handleChange(event) {
   const preRaceField = event.target.closest("[data-prerace-field]");
   if (preRaceField) {
+    if (!assertAdminMode("prerace-field")) {
+      return;
+    }
     updatePreRaceChangeField(preRaceField.dataset.preraceField, preRaceField.value || "");
     renderView();
     return;
@@ -8205,6 +8370,9 @@ async function handleChange(event) {
 
   const manualField = event.target.closest("[data-manual-registration-field]");
   if (manualField) {
+    if (!assertAdminMode("manual-registration-field")) {
+      return;
+    }
     updateManualRegistrationPanelValue(manualField);
     return;
   }
@@ -8222,6 +8390,9 @@ async function handleChange(event) {
 
   const formationActionSelect = event.target.closest("[data-formation-decision-action]");
   if (formationActionSelect) {
+    if (!assertAdminMode("formation-decision")) {
+      return;
+    }
     updatePendingFormationDecision(formationActionSelect.dataset.competitionKey, {
       action: formationActionSelect.value,
     });
@@ -8230,6 +8401,9 @@ async function handleChange(event) {
 
   const formationTargetSelect = event.target.closest("[data-formation-decision-target]");
   if (formationTargetSelect) {
+    if (!assertAdminMode("formation-decision-target")) {
+      return;
+    }
     updatePendingFormationDecision(formationTargetSelect.dataset.competitionKey, {
       action: "merge_manual",
       targetCompetitionKey: formationTargetSelect.value || "",
@@ -8239,6 +8413,9 @@ async function handleChange(event) {
 
   const modelField = event.target.closest("[data-model]");
   if (modelField) {
+    if (!assertAdminMode("model-update")) {
+      return;
+    }
     if (isSettingsModelField(modelField)) {
       updateModelWithoutFullRender(modelField, { save: true });
       if (modelField.tagName === "SELECT") {
@@ -8270,6 +8447,9 @@ async function handleChange(event) {
 
   const adminSelect = event.target.closest("[data-admin-select]");
   if (adminSelect) {
+    if (!assertAdminMode("admin-select")) {
+      return;
+    }
     const adminSelectType = adminSelect.dataset.adminSelect;
     if (adminSelectType === "event") {
       state.adminEventId = adminSelect.value || null;
@@ -8313,6 +8493,9 @@ async function handleChange(event) {
 
   const promoteSelect = event.target.closest("[data-promote-select]");
   if (promoteSelect) {
+    if (!assertAdminMode("promote-select")) {
+      return;
+    }
     if (promoteSelect.dataset.promoteSelect === "entry") {
       const nextEntryId = promoteSelect.value;
       state.promotePanel.targetEntryId = nextEntryId;
@@ -8335,12 +8518,18 @@ function handleFocusOut(event) {
   if (!modelField || !isSettingsModelField(modelField)) {
     return;
   }
+  if (!assertAdminMode("model-update")) {
+    return;
+  }
   updateModelWithoutFullRender(modelField, { save: true });
 }
 
 function handleToggle(event) {
   const details = event.target;
   if (!details?.matches?.("details[data-admin-panel]")) {
+    return;
+  }
+  if (!assertAdminMode("admin-panel-toggle")) {
     return;
   }
   setAdminPanelExpanded(details.dataset.adminPanel, details.open);
@@ -8531,6 +8720,10 @@ function isEntryRankingRuleModelPath(modelPath = "") {
 }
 
 function runAdminAction(action, dataset = {}) {
+  if (!assertAdminMode(action)) {
+    return;
+  }
+
   switch (action) {
     case "add-event":
       addEvent();
@@ -8737,6 +8930,10 @@ function runAdminAction(action, dataset = {}) {
 }
 
 function runAuthAction(action) {
+  if (!assertAdminMode(action)) {
+    return;
+  }
+
   switch (action) {
     case "login-admin":
       loginAdmin();
@@ -11734,6 +11931,10 @@ function resetToDefaultData() {
 }
 
 function ensureAdminAuthenticated() {
+  if (!assertAdminMode("admin-auth")) {
+    return false;
+  }
+
   if (state.isAdminAuthenticated) {
     return true;
   }
