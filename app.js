@@ -1716,14 +1716,15 @@ function syncCurrentContextToAdminSelection() {
 
 function renderShell() {
   const hideTopBar = state.route === "schedule" || state.route === "groups";
+  const useSimplePublicTopbar = state.route === "home" || state.route === "results";
 
   brandName.textContent = state.data.site.brandName;
   systemName.textContent = state.data.site.systemName;
   pageFooter.textContent = state.data.site.footerText;
   topBar.hidden = hideTopBar;
-  topBar.className = state.route === "home" ? "topbar topbar-home" : "topbar";
+  topBar.className = useSimplePublicTopbar ? "topbar topbar-home" : "topbar";
   app.className = hideTopBar ? "detail-page" : "";
-  topNav.className = state.route === "home" ? "topnav topnav-home" : "topnav";
+  topNav.className = useSimplePublicTopbar ? "topnav topnav-home" : "topnav";
 
   const navItems = [
     { id: "home", label: "首页" },
@@ -1969,6 +1970,7 @@ function renderScheduleView() {
   return `
     <section class="schedule-mobile-nav" aria-label="手机端赛程导航">
       <button class="schedule-mobile-nav-pill" type="button" data-route="home">🏠 首页</button>
+      <button class="schedule-mobile-nav-pill" type="button" data-route="results">🔎 成绩查询</button>
       <button class="schedule-mobile-nav-pill active" type="button" data-route="schedule">📅 赛程日历</button>
     </section>
 
